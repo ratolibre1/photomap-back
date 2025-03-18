@@ -1,0 +1,1 @@
+router.get('/update-photo-hashes', requireAdmin, adminController.updatePhotoHashes); 
