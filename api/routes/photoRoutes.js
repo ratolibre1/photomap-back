@@ -3,8 +3,11 @@ const router = express.Router();
 const photoController = require('../controllers/photoController');
 const { protect } = require('../middlewares/auth');
 
+// Ruta para obtener estadísticas del calendario (debe ir ANTES de /:id)
+router.get('/calendar', protect, photoController.getPhotoCalendarStats);
+
 // Rutas públicas
-router.get('/:id', photoController.getPhotoById);
+router.get('/:id', protect, photoController.getPhotoById);
 
 // Rutas protegidas
 router.post('/', protect, photoController.uploadPhoto, photoController.createPhoto);

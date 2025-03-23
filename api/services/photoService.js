@@ -58,8 +58,8 @@ exports.createPhoto = async (photoData, userId) => {
 /**
  * Obtiene fotos según filtros
  */
-exports.searchPhotos = async (filters = {}, options = {}) => {
-  const { page = 1, limit = 20 } = options;
+exports.searchPhotos = async (filters = {}, options = {}, user) => {
+  const { page = 1, limit = 1000 } = options;
   const skip = (page - 1) * limit;
 
   // Construir el query
@@ -68,6 +68,9 @@ exports.searchPhotos = async (filters = {}, options = {}) => {
   // Filtrar por usuario
   if (filters.userId) {
     query.userId = filters.userId;
+  } else if (user && user.id) {
+    // Si no se especifica un userId, mostrar SOLO las fotos del usuario autenticado
+    query.userId = user.id;
   }
 
   // Buscar por texto en título o descripción
@@ -84,20 +87,22 @@ exports.searchPhotos = async (filters = {}, options = {}) => {
   }
 
   // Aplicar filtros
-  if (filters.categories && filters.categories.length) {
-    query.categories = { $in: filters.categories };
+  console.log('Filtros de etiquetas:', filters.labels);
+  if (filters.labels && filters.labels.length) {
+    query.labels = { $all: filters.labels };
   }
 
   if (filters.startDate && filters.endDate) {
+    // Parsear fechas usando UTC
+    const startDate = new Date(`${filters.startDate}T00:00:00Z`);
+    const endDate = new Date(`${filters.endDate}T23:59:59.999Z`);
+
     query.timestamp = {
-      $gte: new Date(filters.startDate),
-      $lte: new Date(filters.endDate)
+      $gte: startDate,
+      $lte: endDate
     };
-  } else if (filters.startDate) {
-    query.timestamp = { $gte: new Date(filters.startDate) };
-  } else if (filters.endDate) {
-    query.timestamp = { $lte: new Date(filters.endDate) };
   }
+  console.log('Filtros de fecha:', filters.startDate, filters.endDate, query.timestamp);
 
   // Filtro por ubicación (cerca de un punto)
   if (filters.near && filters.near.lat && filters.near.lng && filters.near.distance) {
@@ -177,10 +182,17 @@ exports.searchPhotos = async (filters = {}, options = {}) => {
 /**
  * Obtiene una foto por ID
  */
-exports.getPhotoById = async (photoId) => {
-  // Corregido - usar userId en lugar de uploader
-  const photo = await Photo.findById(photoId)
-    .populate('categories', 'name')
+exports.getPhotoById = async (photoId, userId) => {
+  // Crear el filtro base
+  const filter = { _id: photoId };
+
+  // Si hay userId, filtrar por él
+  if (userId) {
+    filter.userId = userId;
+  }
+
+  const photo = await Photo.findOne(filter)
+    .populate('labels')
     .populate('userId', 'name');
 
   if (!photo) {
@@ -301,8 +313,8 @@ exports.updatePhotosVisibility = async (photoIds, isPublic, userId) => {
           continue;
         }
 
-        // Verificar permisos (solo el propietario o admin)
-        if (photo.userId && photo.userId.toString() !== userId) {
+        // Verificar permisos (solo el propietario)
+        if (photo.userId && photo.userId.toString() !== userId.toString()) {
           result.errors.push({ id: photoId, error: 'No tienes permiso para esta foto' });
           result.totalFailed++;
           continue;

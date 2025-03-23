@@ -12,6 +12,7 @@ const {
   AWS_BUCKET_NAME
 } = require('../../config/env');
 const coordParser = require('coord-parser');
+const mongoose = require('mongoose');
 
 // Configuración de multer para subida temporal
 const storage = multer.diskStorage({
@@ -112,17 +113,18 @@ exports.createPhoto = async (req, res, next) => {
       thumbnailUrl: processedImage.thumbnailUrl,
       metadata: processedImage.metadata,
       timestamp: timestamp, // Usar el timestamp determinado arriba
-      categories: req.body.categories
-        ? (Array.isArray(req.body.categories)
-          ? req.body.categories  // Ya es un array
-          : req.body.categories.split(','))  // Es string, convertir a array
+      labels: req.body.labels
+        ? (Array.isArray(req.body.labels)
+          ? req.body.labels
+          : req.body.labels.split(','))
         : [],
       isPublic: req.body.isPublic !== undefined
         ? (typeof req.body.isPublic === 'string'
           ? req.body.isPublic.toLowerCase() === 'true'
           : Boolean(req.body.isPublic))
         : true,
-      fileHash: processedImage.fileHash
+      fileHash: processedImage.fileHash,
+      userId: req.user.id  // Añadir el ID del usuario
     };
 
     // Manejo de ubicación - Solo usar datos EXIF
@@ -162,7 +164,9 @@ exports.createPhoto = async (req, res, next) => {
 // Obtener foto por ID
 exports.getPhotoById = async (req, res, next) => {
   try {
-    const photo = await photoService.getPhotoById(req.params.id);
+    // Verificar si hay usuario autenticado
+    const userId = req.user ? req.user.id : null;
+    const photo = await photoService.getPhotoById(req.params.id, userId);
     return success(res, { photo });
   } catch (err) {
     next(err);
@@ -222,10 +226,10 @@ exports.updatePhoto = async (req, res, next) => {
     const updateData = {
       title: req.body.title,
       description: req.body.description,
-      categories: req.body.categories
-        ? (Array.isArray(req.body.categories)
-          ? req.body.categories  // Ya es un array
-          : req.body.categories.split(','))  // Es string, convertir a array
+      labels: req.body.labels
+        ? (Array.isArray(req.body.labels)
+          ? req.body.labels
+          : req.body.labels.split(','))
         : undefined,
       isPublic: req.body.isPublic !== undefined
         ? (typeof req.body.isPublic === 'string'
@@ -521,9 +525,10 @@ exports.deleteBatchPhotos = async (req, res, next) => {
 // Busca fotos con filtros
 exports.searchPhotos = async (req, res, next) => {
   try {
+    console.log('Recibido en /photos/search:', req.body);
     // Todos los parámetros ahora vienen en el body
     const filters = {
-      categories: req.body.categories || null,
+      labels: req.body.labels || null,
       startDate: req.body.startDate,
       endDate: req.body.endDate,
       userId: req.body.userId,
@@ -554,9 +559,100 @@ exports.searchPhotos = async (req, res, next) => {
       sortDirection: req.body.sortDirection || 'desc'
     };
 
-    const result = await photoService.searchPhotos(filters, options);
+    console.log('Filtros para búsqueda:', filters);
+    const result = await photoService.searchPhotos(filters, options, req.user);
     return success(res, result);
   } catch (err) {
     next(err);
+  }
+};
+
+/**
+ * Obtiene estadísticas de fotos por día para un mes y el siguiente
+ */
+exports.getPhotoCalendarStats = async (req, res, next) => {
+  try {
+    const { month, year } = req.query;
+
+    // Validar parámetros
+    if (!month || !year) {
+      return next(new AppError('Debes proporcionar mes y año', 400));
+    }
+
+    // Convertir a números
+    const monthNum = parseInt(month, 10);
+    const yearNum = parseInt(year, 10);
+
+    // Validar rango de valores
+    if (isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+      return next(new AppError('El mes debe ser un número entre 1 y 12', 400));
+    }
+
+    if (isNaN(yearNum) || yearNum < 1900 || yearNum > 2100) {
+      return next(new AppError('El año debe ser un número válido', 400));
+    }
+
+    // Calcular fecha de inicio (primer día del mes especificado)
+    const startDate = new Date(yearNum, monthNum - 1, 1);
+
+    // Calcular fecha de fin (último día del mes siguiente)
+    const endDate = new Date(yearNum, monthNum + 1, 0); // +1 mes, día 0 = último día del mes anterior
+    endDate.setHours(23, 59, 59, 999);
+
+    console.log('Rango de fechas:', startDate, 'a', endDate);
+
+    // Preparar el filtro de consulta
+    const matchQuery = {
+      timestamp: { $gte: startDate, $lte: endDate }
+    };
+
+    // Si el usuario no es admin, solo ver sus propias fotos
+    if (req.user && req.user.role !== 'admin') {
+      matchQuery.userId = mongoose.Types.ObjectId(req.user.id);
+    }
+
+    // Query para obtener el conteo de fotos por día
+    const results = await Photo.aggregate([
+      {
+        $match: matchQuery
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: "$timestamp" },
+            month: { $month: "$timestamp" },
+            day: { $dayOfMonth: "$timestamp" }
+          },
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          date: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: {
+                $dateFromParts: {
+                  year: "$_id.year",
+                  month: "$_id.month",
+                  day: "$_id.day"
+                }
+              }
+            }
+          },
+          count: 1
+        }
+      },
+      {
+        $sort: { date: 1 }
+      }
+    ]);
+
+    console.log('Resultados de estadísticas del calendario:', results);
+    return success(res, { calendar: results });
+  } catch (error) {
+    console.error('Error al obtener estadísticas del calendario:', error);
+    return next(error);
   }
 }; 

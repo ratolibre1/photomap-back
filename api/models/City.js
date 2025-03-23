@@ -21,6 +21,11 @@ const citySchema = new mongoose.Schema({
     ref: 'County',
     required: true
   },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
   createdAt: {
     type: Date,
     default: Date.now

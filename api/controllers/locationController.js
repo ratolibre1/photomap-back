@@ -7,9 +7,9 @@ const City = require('../models/City');
 /**
  * Lista todos los países disponibles
  */
-exports.getCountries = async (req, res, next) => {
+const getCountries = async (req, res, next) => {
   try {
-    const countries = await Country.find()
+    const countries = await Country.find({ userId: req.user.id })
       .select('_id name')
       .collation({ locale: 'es' })
       .sort('name');
@@ -23,22 +23,26 @@ exports.getCountries = async (req, res, next) => {
 /**
  * Lista regiones, opcionalmente filtradas por país
  */
-exports.getRegions = async (req, res, next) => {
+const getRegions = async (req, res, next) => {
   try {
-    const filter = {};
+    const { countryId } = req.query;
+    const userId = req.user._id;
 
-    // Filtrar por país si se proporciona un ID
-    if (req.query.countryId) {
-      filter.countryId = req.query.countryId;
+    let query = { userId };
+
+    if (countryId) {
+      const country = await Country.findOne({ _id: countryId, userId });
+      if (!country) {
+        return res.status(404).json({ message: 'País no encontrado' });
+      }
+      query.countryId = countryId;
     }
 
-    const regions = await Region.find(filter)
-      .select('_id name countryId')
-      .collation({ locale: 'es' })
-      .sort('name');
+    const regions = await Region.find(query).sort({ name: 1 });
 
     return success(res, regions);
   } catch (error) {
+    console.error('Error al obtener regiones:', error);
     next(error);
   }
 };
@@ -46,26 +50,26 @@ exports.getRegions = async (req, res, next) => {
 /**
  * Lista condados, con filtros opcionales
  */
-exports.getCounties = async (req, res, next) => {
+const getCounties = async (req, res, next) => {
   try {
-    const filter = {};
+    const { regionId } = req.query;
+    const userId = req.user._id;
 
-    // Aplicar filtros si se proporcionan
-    if (req.query.countryId) {
-      filter.countryId = req.query.countryId;
+    let query = { userId };
+
+    if (regionId) {
+      const region = await Region.findOne({ _id: regionId, userId });
+      if (!region) {
+        return res.status(404).json({ message: 'Región no encontrada' });
+      }
+      query.regionId = regionId;
     }
 
-    if (req.query.regionId) {
-      filter.regionId = req.query.regionId;
-    }
-
-    const counties = await County.find(filter)
-      .select('_id name countryId regionId')
-      .collation({ locale: 'es' })
-      .sort('name');
+    const counties = await County.find(query).sort({ name: 1 });
 
     return success(res, counties);
   } catch (error) {
+    console.error('Error al obtener provincias:', error);
     next(error);
   }
 };
@@ -73,30 +77,34 @@ exports.getCounties = async (req, res, next) => {
 /**
  * Lista ciudades, con filtros opcionales
  */
-exports.getCities = async (req, res, next) => {
+const getCities = async (req, res, next) => {
   try {
-    const filter = {};
+    const { countyId } = req.query;
+    const userId = req.user._id;
 
-    // Aplicar filtros si se proporcionan
-    if (req.query.countryId) {
-      filter.countryId = req.query.countryId;
+    let query = { userId };
+
+    if (countyId) {
+      const county = await County.findOne({ _id: countyId, userId });
+      if (!county) {
+        return res.status(404).json({ message: 'Provincia no encontrada' });
+      }
+      query.countyId = countyId;
     }
 
-    if (req.query.regionId) {
-      filter.regionId = req.query.regionId;
-    }
-
-    if (req.query.countyId) {
-      filter.countyId = req.query.countyId;
-    }
-
-    const cities = await City.find(filter)
-      .select('_id name countryId regionId countyId')
-      .collation({ locale: 'es' })
-      .sort('name');
+    const cities = await City.find(query).sort({ name: 1 });
 
     return success(res, cities);
   } catch (error) {
+    console.error('Error al obtener ciudades:', error);
     next(error);
   }
+};
+
+// Ahora sí puedes exportarlas todas juntas
+module.exports = {
+  getCountries,
+  getRegions,
+  getCounties,
+  getCities
 }; 

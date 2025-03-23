@@ -32,9 +32,9 @@ const photoSchema = new mongoose.Schema({
     type: Date,
     required: true
   },
-  categories: [{
+  labels: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category'
+    ref: 'Label'
   }],
   metadata: {
     camera: String,
@@ -93,6 +93,11 @@ const photoSchema = new mongoose.Schema({
   fileHash: {
     type: String,
     index: true  // Agregar índice para búsquedas rápidas
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
   }
 }, {
   timestamps: true
@@ -102,7 +107,7 @@ const photoSchema = new mongoose.Schema({
 photoSchema.index({ location: '2dsphere' });
 
 // Índices para búsquedas comunes
-photoSchema.index({ categories: 1 });
+photoSchema.index({ labels: 1 });
 photoSchema.index({ timestamp: 1 });
 
 // Agregar índices para búsquedas por región

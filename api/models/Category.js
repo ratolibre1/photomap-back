@@ -11,15 +11,16 @@ const categorySchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  creator: {
+  userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'User',
+    required: true
   },
   createdAt: {
     type: Date,
     default: Date.now
   }
-});
+}, { timestamps: true });
 
 const Category = mongoose.model('Category', categorySchema);
 
