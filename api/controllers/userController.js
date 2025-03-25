@@ -46,4 +46,32 @@ exports.getMe = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+// Actualizar idioma preferido del usuario
+exports.updatePreferredLanguage = async (req, res, next) => {
+  try {
+    const { preferredLanguage } = req.body;
+
+    // Validar que el idioma enviado esté entre los permitidos
+    const allowedLanguages = ['es', 'en', 'es-CL', 'en-US'];
+    if (!allowedLanguages.includes(preferredLanguage)) {
+      return next(new AppError('Idioma no válido. Opciones permitidas: es, en, es-CL, en-US', 400));
+    }
+
+    // Actualizar el idioma del usuario
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { preferredLanguage },
+      { new: true, runValidators: true }
+    );
+
+    if (!user) {
+      return next(new AppError('Usuario no encontrado', 404));
+    }
+
+    return success(res, { user });
+  } catch (err) {
+    next(err);
+  }
 }; 

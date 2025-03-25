@@ -29,6 +29,11 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  preferredLanguage: {
+    type: String,
+    enum: ['es', 'en', 'es-CL', 'en-US'], // Códigos ISO 639-1 (opcionalmente con región)
+    default: 'es-CL'
+  },
   createdAt: {
     type: Date,
     default: Date.now

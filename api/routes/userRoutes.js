@@ -11,5 +11,6 @@ router.post('/login', validateLogin, userController.login);
 // Rutas protegidas
 router.get('/', protect, restrictTo('admin'), userController.getUsers);
 router.get('/me', protect, userController.getMe);
+router.patch('/language', protect, userController.updatePreferredLanguage);
 
 module.exports = router; 
