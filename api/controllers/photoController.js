@@ -655,4 +655,109 @@ exports.getPhotoCalendarStats = async (req, res, next) => {
     console.error('Error al obtener estadísticas del calendario:', error);
     return next(error);
   }
-}; 
+};
+
+/**
+ * Obtiene fotos tomadas "Un día como hoy" en años anteriores
+ * agrupadas por año
+ */
+exports.getOnThisDayPhotos = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+
+    // Obtener fecha actual
+    const today = new Date();
+    const currentMonth = today.getMonth() + 1; // getMonth() retorna 0-11
+    const currentDay = today.getDate();
+    const currentYear = today.getFullYear();
+
+    console.log(`Buscando fotos para día ${currentDay} y mes ${currentMonth} (años anteriores a ${currentYear})`);
+
+    // Buscar fotos del mismo día y mes en años anteriores
+    const photos = await Photo.aggregate([
+      // Filtrar por usuario
+      { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+
+      // Extraer campos de fecha de timestamp (o fecha de la foto)
+      {
+        $addFields: {
+          photoDay: { $dayOfMonth: "$timestamp" },
+          photoMonth: { $month: "$timestamp" },
+          photoYear: { $year: "$timestamp" }
+        }
+      },
+
+      // Filtrar solo por fotos del mismo día y mes, pero años anteriores
+      {
+        $match: {
+          photoDay: currentDay,
+          photoMonth: currentMonth,
+          photoYear: { $lt: currentYear } // Solo años anteriores
+        }
+      },
+
+      // Ordenar por año (más reciente primero)
+      { $sort: { photoYear: -1 } },
+
+      // Agrupar por año
+      {
+        $group: {
+          _id: "$photoYear",
+          photos: {
+            $push: {
+              _id: "$_id",
+              title: "$title",
+              description: "$description",
+              filename: "$filename",
+              thumbnailUrl: "$thumbnailUrl",
+              originalUrl: "$originalUrl",
+              timestamp: "$timestamp",
+              location: "$location",
+              isPublic: "$isPublic",
+              geocodingDetails: "$geocodingDetails"
+            }
+          },
+          count: { $sum: 1 }
+        }
+      },
+
+      // Formatear resultado final
+      {
+        $project: {
+          year: "$_id",
+          photos: 1,
+          count: 1,
+          _id: 0
+        }
+      },
+
+      // Ordenar por año descendente
+      { $sort: { year: -1 } }
+    ]);
+
+    // Si no hay fotos para este día
+    if (photos.length === 0) {
+      return success(res, {
+        message: `No tienes fotos tomadas un ${currentDay} de ${getMonthName(currentMonth)} en años anteriores`,
+        memories: []
+      });
+    }
+
+    return success(res, {
+      date: `${currentDay} de ${getMonthName(currentMonth)}`,
+      memories: photos
+    });
+  } catch (error) {
+    console.error('Error al obtener fotos de "Un día como hoy":', error);
+    next(error);
+  }
+};
+
+// Función auxiliar para obtener el nombre del mes
+function getMonthName(month) {
+  const months = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+  ];
+  return months[month - 1]; // Ajustar porque los meses en JS van de 0-11
+} 

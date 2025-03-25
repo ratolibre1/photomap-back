@@ -6,6 +6,9 @@ const { protect } = require('../middlewares/auth');
 // Ruta para obtener estadísticas del calendario (debe ir ANTES de /:id)
 router.get('/calendar', protect, photoController.getPhotoCalendarStats);
 
+// Ruta para "Un día como hoy"
+router.get('/on-this-day', protect, photoController.getOnThisDayPhotos);
+
 // Rutas públicas
 router.get('/:id', protect, photoController.getPhotoById);
 
