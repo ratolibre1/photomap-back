@@ -140,7 +140,16 @@ exports.createPhoto = async (req, res, next) => {
         coordinates: processedImage.metadata.coordinates,
         name: null // Dejar el nombre como null
       };
+
+      // Verificar si son coordenadas válidas (no 0,0)
+      const isNotZeroZero = processedImage.metadata.coordinates[0] !== 0 ||
+        processedImage.metadata.coordinates[1] !== 0;
+
+      // Establecer flag de coordenadas válidas
+      photoData.hasValidCoordinates = isNotZeroZero;
+
       console.log('Usando coordenadas EXIF:', processedImage.metadata.coordinates);
+      console.log('hasValidCoordinates:', photoData.hasValidCoordinates);
 
     } else {
       // No hay coordenadas EXIF válidas, usar [0,0]
@@ -149,7 +158,12 @@ exports.createPhoto = async (req, res, next) => {
         coordinates: [0, 0],
         name: null
       };
+
+      // No tiene coordenadas válidas
+      photoData.hasValidCoordinates = false;
+
       console.log('No se encontraron coordenadas EXIF, usando [0,0]');
+      console.log('hasValidCoordinates: false');
     }
 
     // Guardar foto en DB
@@ -270,7 +284,11 @@ exports.updatePhoto = async (req, res, next) => {
           // El formato para MongoDB es [longitud, latitud]
           const coordinates = [parsedCoord.lng, parsedCoord.lat];
 
+          // Verificar si son coordenadas no nulas (0,0)
+          const isValidCoordinates = parsedCoord.lng !== 0 || parsedCoord.lat !== 0;
+
           console.log('Coordenadas finales para MongoDB:', coordinates);
+          console.log('¿Son coordenadas válidas?', isValidCoordinates);
 
           updateData.location = {
             type: 'Point',
@@ -283,6 +301,14 @@ exports.updatePhoto = async (req, res, next) => {
           } else if (currentPhoto.location && currentPhoto.location.name) {
             // Mantener el nombre actual si existe
             updateData.location.name = currentPhoto.location.name;
+          }
+
+          // Actualizar flag hasValidCoordinates solo si:
+          // 1. La foto no tenía coordenadas válidas antes Y
+          // 2. Las nuevas coordenadas son válidas (no 0,0)
+          if (!currentPhoto.hasValidCoordinates && isValidCoordinates) {
+            updateData.hasValidCoordinates = true;
+            console.log('Actualizando hasValidCoordinates a true');
           }
 
           // Marcar para re-geocodificación
@@ -685,10 +711,14 @@ exports.getOnThisDayPhotos = async (req, res, next) => {
         return next(new AppError('El día debe ser un número entre 1 y 31', 400));
       }
 
-      // Validar combinación día-mes
-      const daysInMonth = new Date(today.getFullYear(), month, 0).getDate();
-      if (day > daysInMonth) {
-        return next(new AppError(`El mes ${month} tiene ${daysInMonth} días`, 400));
+      // Validación más flexible para días en cada mes
+      const maxDaysInMonth = {
+        1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30,
+        7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31
+      };
+
+      if (day > maxDaysInMonth[month]) {
+        return next(new AppError(`El mes ${month} tiene máximo ${maxDaysInMonth[month]} días`, 400));
       }
 
       // Actualizar valores

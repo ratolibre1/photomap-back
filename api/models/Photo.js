@@ -28,6 +28,11 @@ const photoSchema = new mongoose.Schema({
       required: false
     }
   },
+  // Flag para indicar si la foto tiene coordenadas válidas
+  hasValidCoordinates: {
+    type: Boolean,
+    default: false
+  },
   timestamp: {
     type: Date,
     required: true
