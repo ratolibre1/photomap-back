@@ -665,10 +665,41 @@ exports.getOnThisDayPhotos = async (req, res, next) => {
   try {
     const userId = req.user._id;
 
-    // Obtener fecha actual
+    // Obtener fecha (actual o de los parámetros)
     const today = new Date();
-    const currentMonth = today.getMonth() + 1; // getMonth() retorna 0-11
-    const currentDay = today.getDate();
+    let currentMonth = today.getMonth() + 1; // getMonth() retorna 0-11
+    let currentDay = today.getDate();
+
+    // Si se proporcionan ambos parámetros, validarlos y usarlos
+    if (req.query.month && req.query.day) {
+      const month = parseInt(req.query.month);
+      const day = parseInt(req.query.day);
+
+      // Validar mes
+      if (isNaN(month) || month < 1 || month > 12) {
+        return next(new AppError('El mes debe ser un número entre 1 y 12', 400));
+      }
+
+      // Validar día
+      if (isNaN(day) || day < 1 || day > 31) {
+        return next(new AppError('El día debe ser un número entre 1 y 31', 400));
+      }
+
+      // Validar combinación día-mes
+      const daysInMonth = new Date(today.getFullYear(), month, 0).getDate();
+      if (day > daysInMonth) {
+        return next(new AppError(`El mes ${month} tiene ${daysInMonth} días`, 400));
+      }
+
+      // Actualizar valores
+      currentMonth = month;
+      currentDay = day;
+    }
+    // Si se proporciona solo uno de los dos parámetros, error
+    else if (req.query.month || req.query.day) {
+      return next(new AppError('Debes proporcionar tanto el día como el mes, o ninguno para usar la fecha actual', 400));
+    }
+
     const currentYear = today.getFullYear();
 
     console.log(`Buscando fotos para día ${currentDay} y mes ${currentMonth} (años anteriores a ${currentYear})`);
