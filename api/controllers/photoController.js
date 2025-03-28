@@ -324,17 +324,50 @@ exports.updatePhoto = async (req, res, next) => {
         return next(new AppError(`No se pudo interpretar las coordenadas: ${coordError.message}`, 400));
       }
     }
-    // Si se proporciona solo un nombre de ubicación, mantener las coordenadas existentes
-    else if (req.body.locationName && currentPhoto.location) {
-      updateData.location = {
-        type: currentPhoto.location.type,
-        coordinates: currentPhoto.location.coordinates,
-        name: req.body.locationName
-      };
-      console.log('Actualizando nombre de ubicación a:', req.body.locationName);
-    }
 
     const photo = await photoService.updatePhoto(req.params.id, updateData, req.user.id);
+
+    return success(res, { photo });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Actualiza la transformación CSS de una foto
+ */
+exports.updatePhotoCssTransform = async (req, res, next) => {
+  try {
+    const { cssTransform } = req.body;
+
+    if (!cssTransform) {
+      return next(new AppError('Se requiere proporcionar la transformación CSS', 400));
+    }
+
+    console.log('Actualizando transformación CSS:', cssTransform);
+
+    // Validar estructura de cssTransform
+    const validTransform = {
+      rotation: typeof cssTransform.rotation === 'number' ? cssTransform.rotation : 0,
+      scale: typeof cssTransform.scale === 'number' ? cssTransform.scale : 1,
+      flipHorizontal: typeof cssTransform.flipHorizontal === 'number' ? cssTransform.flipHorizontal : 1,
+      flipVertical: typeof cssTransform.flipVertical === 'number' ? cssTransform.flipVertical : 1,
+      offsetX: typeof cssTransform.offsetX === 'number' ? cssTransform.offsetX : 0,
+      offsetY: typeof cssTransform.offsetY === 'number' ? cssTransform.offsetY : 0
+    };
+
+    // Agregar crop solo si está presente y tiene todos los campos necesarios
+    if (cssTransform.crop &&
+      typeof cssTransform.crop.width === 'number' &&
+      typeof cssTransform.crop.height === 'number' &&
+      typeof cssTransform.crop.x === 'number' &&
+      typeof cssTransform.crop.y === 'number') {
+      validTransform.crop = cssTransform.crop;
+    }
+
+    const photo = await photoService.updatePhoto(req.params.id, {
+      cssTransform: validTransform
+    }, req.user.id);
 
     return success(res, { photo });
   } catch (err) {

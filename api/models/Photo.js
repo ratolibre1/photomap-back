@@ -33,6 +33,21 @@ const photoSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Configuración de transformación CSS
+  cssTransform: {
+    rotation: { type: Number, default: 0 },
+    scale: { type: Number, default: 1 },
+    flipHorizontal: { type: Number, default: 1 },
+    flipVertical: { type: Number, default: 1 },
+    offsetX: { type: Number, default: 0 },
+    offsetY: { type: Number, default: 0 },
+    crop: {
+      width: { type: Number },
+      height: { type: Number },
+      x: { type: Number },
+      y: { type: Number }
+    }
+  },
   timestamp: {
     type: Date,
     required: true

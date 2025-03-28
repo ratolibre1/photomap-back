@@ -9,6 +9,9 @@ router.get('/calendar', protect, photoController.getPhotoCalendarStats);
 // Ruta para "Un día como hoy"
 router.get('/on-this-day', protect, photoController.getOnThisDayPhotos);
 
+// Ruta para editar transformación CSS de una foto
+router.patch('/:id/css-transform', protect, photoController.updatePhotoCssTransform);
+
 // Rutas públicas
 router.get('/:id', protect, photoController.getPhotoById);
 
