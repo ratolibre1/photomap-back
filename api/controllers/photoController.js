@@ -351,9 +351,7 @@ exports.updatePhotoCssTransform = async (req, res, next) => {
       rotation: typeof cssTransform.rotation === 'number' ? cssTransform.rotation : 0,
       scale: typeof cssTransform.scale === 'number' ? cssTransform.scale : 1,
       flipHorizontal: typeof cssTransform.flipHorizontal === 'number' ? cssTransform.flipHorizontal : 1,
-      flipVertical: typeof cssTransform.flipVertical === 'number' ? cssTransform.flipVertical : 1,
-      offsetX: typeof cssTransform.offsetX === 'number' ? cssTransform.offsetX : 0,
-      offsetY: typeof cssTransform.offsetY === 'number' ? cssTransform.offsetY : 0
+      flipVertical: typeof cssTransform.flipVertical === 'number' ? cssTransform.flipVertical : 1
     };
 
     // Agregar crop solo si está presente y tiene todos los campos necesarios
@@ -362,7 +360,16 @@ exports.updatePhotoCssTransform = async (req, res, next) => {
       typeof cssTransform.crop.height === 'number' &&
       typeof cssTransform.crop.x === 'number' &&
       typeof cssTransform.crop.y === 'number') {
-      validTransform.crop = cssTransform.crop;
+
+      // Validar que los valores estén en rangos razonables
+      validTransform.crop = {
+        x: Math.min(Math.max(cssTransform.crop.x, 0), 100), // Entre 0 y 100
+        y: Math.min(Math.max(cssTransform.crop.y, 0), 100), // Entre 0 y 100
+        width: Math.min(Math.max(cssTransform.crop.width, 1), 100), // Entre 1 y 100
+        height: Math.min(Math.max(cssTransform.crop.height, 1), 100) // Entre 1 y 100
+      };
+
+      console.log('Aplicando crop:', validTransform.crop);
     }
 
     const photo = await photoService.updatePhoto(req.params.id, {

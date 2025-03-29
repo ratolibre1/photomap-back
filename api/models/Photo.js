@@ -35,17 +35,15 @@ const photoSchema = new mongoose.Schema({
   },
   // Configuración de transformación CSS
   cssTransform: {
-    rotation: { type: Number, default: 0 },
-    scale: { type: Number, default: 1 },
-    flipHorizontal: { type: Number, default: 1 },
-    flipVertical: { type: Number, default: 1 },
-    offsetX: { type: Number, default: 0 },
-    offsetY: { type: Number, default: 0 },
+    rotation: { type: Number, default: 0 },    // Rotación en grados (0, 90, 180, 270)
+    scale: { type: Number, default: 1 },       // Factor de escala (1 = 100%)
+    flipHorizontal: { type: Number, default: 1 }, // 1 normal, -1 volteado
+    flipVertical: { type: Number, default: 1 },   // 1 normal, -1 volteado
     crop: {
-      width: { type: Number },
-      height: { type: Number },
-      x: { type: Number },
-      y: { type: Number }
+      x: { type: Number },       // Centro del recorte como % del ancho (0-100)
+      y: { type: Number },       // Centro del recorte como % del alto (0-100)
+      width: { type: Number },   // Ancho del recorte como % del original (0-100)
+      height: { type: Number }   // Alto del recorte como % del original (0-100)
     }
   },
   timestamp: {
