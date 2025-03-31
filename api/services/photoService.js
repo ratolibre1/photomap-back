@@ -228,19 +228,25 @@ exports.updatePhoto = async (photoId, updateData, userId) => {
     }
   }
 
-  // Actualizar la foto
-  Object.keys(updateData).forEach(key => {
-    if (updateData[key] !== undefined) {
-      // Para manejar campos anidados como 'location.name'
-      if (key.includes('.')) {
-        const [parent, child] = key.split('.');
-        if (!photo[parent]) photo[parent] = {};
-        photo[parent][child] = updateData[key];
-      } else {
-        photo[key] = updateData[key];
+  // Caso especial para eliminar cssTransform
+  if (updateData.cssTransform === undefined && updateData.edited === false) {
+    photo.cssTransform = undefined;
+    photo.edited = false;
+  } else {
+    // Actualizar la foto con los campos normales
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] !== undefined) {
+        // Para manejar campos anidados como 'location.name'
+        if (key.includes('.')) {
+          const [parent, child] = key.split('.');
+          if (!photo[parent]) photo[parent] = {};
+          photo[parent][child] = updateData[key];
+        } else {
+          photo[key] = updateData[key];
+        }
       }
-    }
-  });
+    });
+  }
 
   // Guardar cambios
   await photo.save();

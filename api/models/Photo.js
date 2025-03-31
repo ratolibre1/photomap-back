@@ -33,6 +33,11 @@ const photoSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Flag para indicar si la foto ha sido editada
+  edited: {
+    type: Boolean,
+    default: false
+  },
   // Configuración de transformación CSS
   cssTransform: {
     rotation: { type: Number, default: 0 },    // Rotación en grados (0, 90, 180, 270)

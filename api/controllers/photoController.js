@@ -338,8 +338,25 @@ exports.updatePhoto = async (req, res, next) => {
  */
 exports.updatePhotoCssTransform = async (req, res, next) => {
   try {
-    const { cssTransform } = req.body;
+    const { cssTransform, edited } = req.body;
 
+    // Si edited es false, eliminamos el cssTransform
+    if (edited === false) {
+      console.log('Eliminando transformación CSS');
+      const photo = await photoService.updatePhoto(req.params.id, {
+        cssTransform: undefined,
+        edited: false
+      }, req.user.id);
+
+      return success(res, { photo });
+    }
+
+    // Si edited es true, debe venir con cssTransform
+    if (edited === true && !cssTransform) {
+      return next(new AppError('Si edited es true, se requiere proporcionar la transformación CSS', 400));
+    }
+
+    // Caso normal: recibimos cssTransform
     if (!cssTransform) {
       return next(new AppError('Se requiere proporcionar la transformación CSS', 400));
     }
@@ -373,7 +390,8 @@ exports.updatePhotoCssTransform = async (req, res, next) => {
     }
 
     const photo = await photoService.updatePhoto(req.params.id, {
-      cssTransform: validTransform
+      cssTransform: validTransform,
+      edited: true
     }, req.user.id);
 
     return success(res, { photo });
