@@ -676,26 +676,41 @@ exports.getPhotoCalendarStats = async (req, res, next) => {
       return next(new AppError('El año debe ser un número válido', 400));
     }
 
-    // Calcular fecha de inicio (primer día del mes especificado)
-    const startDate = new Date(yearNum, monthNum - 1, 1);
+    console.log(`Calculando estadísticas para: mes=${monthNum}, año=${yearNum}`);
 
-    // Calcular fecha de fin (último día del mes siguiente)
-    const endDate = new Date(yearNum, monthNum + 1, 0); // +1 mes, día 0 = último día del mes anterior
-    endDate.setHours(23, 59, 59, 999);
+    // Calcular fecha de inicio (primer día del mes especificado en UTC)
+    // Usamos UTC para todas las fechas para evitar problemas de zona horaria
+    const startDate = new Date(Date.UTC(yearNum, monthNum - 1, 1, 0, 0, 0, 0));
 
-    console.log('Rango de fechas:', startDate, 'a', endDate);
+    // Calcular fecha de fin (último día del mes siguiente en UTC)
+    let nextMonth, nextYear;
+
+    if (monthNum === 12) {
+      // Diciembre -> Enero del año siguiente
+      nextMonth = 1;
+      nextYear = yearNum + 1;
+    } else {
+      // Cualquier otro mes -> Mes siguiente del mismo año
+      nextMonth = monthNum + 1;
+      nextYear = yearNum;
+    }
+
+    // Último día del mes siguiente en UTC (a las 23:59:59.999)
+    const endDate = new Date(Date.UTC(nextYear, nextMonth, 0, 23, 59, 59, 999));
+
+    console.log('Rango de fechas en UTC:',
+      `De: ${startDate.toISOString()}`,
+      `A: ${endDate.toISOString()}`);
 
     // Preparar el filtro de consulta
     const matchQuery = {
-      timestamp: { $gte: startDate, $lte: endDate }
+      timestamp: { $gte: startDate, $lte: endDate },
+      isPublic: true, // Solo fotos públicas para el mapa
+      userId: new mongoose.Types.ObjectId(req.user.id) // Siempre filtrar por el usuario logueado
     };
 
-    // Si el usuario no es admin, solo ver sus propias fotos
-    if (req.user && req.user.role !== 'admin') {
-      matchQuery.userId = mongoose.Types.ObjectId(req.user.id);
-    }
-
     // Query para obtener el conteo de fotos por día
+    // Usamos operadores de fecha que respetan timezone
     const results = await Photo.aggregate([
       {
         $match: matchQuery
@@ -703,9 +718,13 @@ exports.getPhotoCalendarStats = async (req, res, next) => {
       {
         $group: {
           _id: {
-            year: { $year: "$timestamp" },
-            month: { $month: "$timestamp" },
-            day: { $dayOfMonth: "$timestamp" }
+            // Usamos $dateToString para asegurar que las fechas se traten en UTC
+            date: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: "$timestamp"
+              }
+            }
           },
           count: { $sum: 1 }
         }
@@ -713,18 +732,7 @@ exports.getPhotoCalendarStats = async (req, res, next) => {
       {
         $project: {
           _id: 0,
-          date: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: {
-                $dateFromParts: {
-                  year: "$_id.year",
-                  month: "$_id.month",
-                  day: "$_id.day"
-                }
-              }
-            }
-          },
+          date: "$_id.date",
           count: 1
         }
       },
