@@ -1,5 +1,4 @@
 const axios = require('axios');
-const { OPENCAGE_API_KEY } = require('../../config/env');
 const Photo = require('../models/Photo');
 const Country = require('../models/Country');
 const Region = require('../models/Region');
