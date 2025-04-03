@@ -8,7 +8,10 @@
     "dev": "nodemon --ignore 'temp/*' server.js",
     "test": "jest",
     "lint": "eslint .",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "build": "npm install --production",
+    "render-build": "npm install",
+    "render-start": "node server.js"
   },
   "keywords": [
     "node",
@@ -49,5 +52,8 @@
   "devDependencies": {
     "jest": "^29.7.0",
     "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
