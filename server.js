@@ -12,6 +12,27 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
+// Endpoint para health check en Render.com
+app.get('/health', (req, res) => {
+  const currentTime = new Date().toISOString();
+  const memoryUsage = process.memoryUsage();
+
+  res.json({
+    status: 'OK',
+    timestamp: currentTime,
+    service: 'photomap-api',
+    environment: process.env.NODE_ENV || 'development',
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    uptime: process.uptime() + ' segundos',
+    memoryUsage: {
+      rss: Math.round(memoryUsage.rss / 1024 / 1024) + ' MB',
+      heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + ' MB',
+      heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + ' MB'
+    },
+    version: '1.0.0'
+  });
+});
+
 // Usar solo el router principal para todas las rutas
 app.use('/', mainRouter);
 
