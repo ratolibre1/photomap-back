@@ -9,6 +9,7 @@ const statsRoutes = require('./statsRoutes');
 const locationRoutes = require('./locationRoutes');
 const uploadRoutes = require('./uploadRoutes');
 const adminRoutes = require('./adminRoutes');
+const publicMapRoutes = require('./publicMapRoutes');
 
 // Agrupar todas las rutas
 router.use('/api', apiRoutes);
@@ -20,6 +21,7 @@ router.use('/stats', statsRoutes);
 router.use('/location', locationRoutes);
 router.use('/upload', uploadRoutes);
 router.use('/admin', adminRoutes);
+router.use('/public-maps', publicMapRoutes);
 
 // Eliminar rutas de autenticación de Google
 // router.get('/auth/google', photosController.authGoogle);

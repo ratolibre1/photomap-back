@@ -93,16 +93,53 @@ exports.searchPhotos = async (filters = {}, options = {}, user) => {
   }
 
   if (filters.startDate && filters.endDate) {
-    // Parsear fechas usando UTC
-    const startDate = new Date(`${filters.startDate}T00:00:00Z`);
-    const endDate = new Date(`${filters.endDate}T23:59:59.999Z`);
+    try {
+      // Asegurarse de que las fechas estén en formato correcto
+      let startDate, endDate;
 
-    query.timestamp = {
-      $gte: startDate,
-      $lte: endDate
-    };
+      // Intentar parsear fechas
+      if (typeof filters.startDate === 'string') {
+        // Si es formato YYYY-MM-DD
+        if (filters.startDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          startDate = new Date(`${filters.startDate}T00:00:00Z`);
+        } else {
+          startDate = new Date(filters.startDate);
+        }
+      } else if (filters.startDate instanceof Date) {
+        startDate = filters.startDate;
+      }
+
+      if (typeof filters.endDate === 'string') {
+        // Si es formato YYYY-MM-DD
+        if (filters.endDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          endDate = new Date(`${filters.endDate}T23:59:59.999Z`);
+        } else {
+          endDate = new Date(filters.endDate);
+        }
+      } else if (filters.endDate instanceof Date) {
+        endDate = filters.endDate;
+      }
+
+      // Verificar que las fechas sean válidas
+      if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        query.timestamp = {
+          $gte: startDate,
+          $lte: endDate
+        };
+        console.log('Filtros de fecha válidos:', startDate.toISOString(), endDate.toISOString());
+      } else {
+        console.warn('Fechas inválidas, ignorando filtro de fechas');
+      }
+    } catch (error) {
+      console.error('Error al procesar fechas:', error);
+      // No aplicar filtro de fechas si hay error
+    }
   }
-  console.log('Filtros de fecha:', filters.startDate, filters.endDate, query.timestamp);
+  console.log('Filtros de fecha procesados:', filters.startDate, filters.endDate,
+    query.timestamp ? {
+      $gte: query.timestamp.$gte?.toISOString?.() || 'inválido',
+      $lte: query.timestamp.$lte?.toISOString?.() || 'inválido'
+    } : 'no aplicado');
 
   // Filtro por ubicación (cerca de un punto)
   if (filters.near && filters.near.lat && filters.near.lng && filters.near.distance) {
