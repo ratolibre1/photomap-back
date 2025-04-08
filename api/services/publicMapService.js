@@ -5,10 +5,18 @@ const photoService = require('./photoService');
 
 /**
  * Genera un ID único para compartir
- * @returns {String} ID único de 8 caracteres
+ * @returns {String} ID único basado en hash del userId y timestamp
  */
 const generateShareId = () => {
-  return crypto.randomBytes(4).toString('hex');
+  const timestamp = Date.now();
+  // Creamos un hash usando SHA-256 del userId + timestamp
+  const hash = crypto
+    .createHash('sha256')
+    .update(`${timestamp}`)
+    .digest('base64url'); // base64url es URL-safe por defecto
+
+  // Tomamos los primeros 16 caracteres del hash
+  return hash.substring(0, 16);
 };
 
 /**
