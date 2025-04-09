@@ -3,11 +3,17 @@ const jwt = require('jsonwebtoken');
 const { JWT_SECRET, JWT_EXPIRES_IN } = require('../../config/env');
 const { AppError } = require('../utils/errorHandler');
 
-const generateToken = (id) => {
-  return jwt.sign({ id }, JWT_SECRET, {
+/**
+ * Genera un token JWT para el usuario
+ */
+const generateToken = (userId) => {
+  return jwt.sign({ id: userId }, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN
   });
 };
+
+// Exportar la función para que esté disponible para otros módulos
+exports.generateToken = generateToken;
 
 exports.register = async (userData) => {
   // Verificar si el email ya existe
