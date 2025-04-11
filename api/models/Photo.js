@@ -25,8 +25,13 @@ const photoSchema = new mongoose.Schema({
     },
     coordinates: {
       type: [Number],
-      required: false
-    }
+      default: null
+    },
+    name: {
+      type: String,
+      default: null
+    },
+    _id: false
   },
   // Flag para indicar si la foto tiene coordenadas válidas
   hasValidCoordinates: {
@@ -53,7 +58,13 @@ const photoSchema = new mongoose.Schema({
   },
   timestamp: {
     type: Date,
-    required: true
+    required: true,
+    default: new Date(1900, 0, 1) // Fecha por defecto: 1 de enero de 2000
+  },
+  // Flag para indicar si la foto tiene fecha válida
+  hasValidTimestamp: {
+    type: Boolean,
+    default: false
   },
   labels: [{
     type: mongoose.Schema.Types.ObjectId,

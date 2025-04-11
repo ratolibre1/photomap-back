@@ -55,123 +55,51 @@ exports.uploadPhoto = upload.single('photo');
 exports.createPhoto = async (req, res, next) => {
   try {
     if (!req.file) {
-      return next(new AppError('No se ha subido ninguna imagen', 400));
+      return next(new AppError('No se subió ningún archivo', 400));
     }
 
-    // Ruta temporal del archivo
-    const filePath = req.file.path;
+    const processedImage = await processUploadedPhoto(req.file);
 
-    // Leer archivo
-    const fileBuffer = fs.readFileSync(filePath);
-
-    // Procesar imagen y subirla a S3
-    const processedImage = await imageService.processImage(
-      fileBuffer,
-      req.file.originalname
-    );
-
-    // Verificar duplicados por hash
-    if (processedImage.fileHash) {
-      const existingPhoto = await Photo.findOne({
-        fileHash: processedImage.fileHash,
-        userId: req.user.id  // Solo buscar entre las fotos del mismo usuario
-      });
-
-      if (existingPhoto) {
-        // Eliminar archivo temporal
-        fs.unlinkSync(filePath);
-
-        // Si el cliente envió un parámetro para forzar la subida a pesar de duplicados
-        if (req.body.forceDuplicate !== 'true') {
-          return next(new AppError('Esta imagen ya fue subida anteriormente', 409, {
-            duplicateId: existingPhoto._id
-          }));
-        }
-        // Si forzó la subida, continuamos pero lo registramos
-        console.log(`Subiendo duplicado forzado de foto ${existingPhoto._id}`);
-      }
-    }
-
-    // Eliminar archivo temporal
-    fs.unlinkSync(filePath);
-
-    // Fecha predeterminada: 1 de enero de 2000
-    const defaultDate = new Date(2000, 0, 1);
-
-    // Usar fecha de EXIF si está disponible, o la predeterminada
-    const timestamp = (processedImage.metadata && processedImage.metadata.captureDate)
-      ? processedImage.metadata.captureDate
-      : defaultDate;
-
-    console.log('Usando timestamp:', timestamp);
-
-    // Preparar datos para guardar en DB
+    // Preparar datos básicos de la foto
     const photoData = {
-      title: req.body.title || path.basename(req.file.originalname, path.extname(req.file.originalname)),
-      description: req.body.description,
+      userId: req.user.id,
+      title: req.body.title || req.file.originalname,
+      description: req.body.description || '',
       originalUrl: processedImage.originalUrl,
       thumbnailUrl: processedImage.thumbnailUrl,
-      metadata: processedImage.metadata,
-      timestamp: timestamp, // Usar el timestamp determinado arriba
-      labels: req.body.labels
-        ? (Array.isArray(req.body.labels)
-          ? req.body.labels
-          : req.body.labels.split(','))
-        : [],
-      isPublic: req.body.isPublic !== undefined
-        ? (typeof req.body.isPublic === 'string'
-          ? req.body.isPublic.toLowerCase() === 'true'
-          : Boolean(req.body.isPublic))
-        : true,
-      fileHash: processedImage.fileHash,
-      userId: req.user.id  // Añadir el ID del usuario
+      timestamp: processedImage.metadata?.captureDate || new Date(),
+      hasValidTimestamp: !!processedImage.metadata?.captureDate,
+      reviewed: false,
+      isPublic: false
     };
 
-    // Manejo de ubicación - Solo usar datos EXIF
-    if (processedImage.metadata && processedImage.metadata.coordinates &&
-      Array.isArray(processedImage.metadata.coordinates) &&
-      processedImage.metadata.coordinates.length === 2 &&
-      !isNaN(processedImage.metadata.coordinates[0]) &&
-      !isNaN(processedImage.metadata.coordinates[1])) {
-
-      // Usar coordenadas de EXIF
+    // Procesar coordenadas EXIF si existen
+    if (processedImage.metadata?.coordinates?.lat && processedImage.metadata?.coordinates?.lon) {
       photoData.location = {
         type: 'Point',
-        coordinates: processedImage.metadata.coordinates,
-        name: null // Dejar el nombre como null
-      };
-
-      // Verificar si son coordenadas válidas (no 0,0)
-      const isNotZeroZero = processedImage.metadata.coordinates[0] !== 0 ||
-        processedImage.metadata.coordinates[1] !== 0;
-
-      // Establecer flag de coordenadas válidas
-      photoData.hasValidCoordinates = isNotZeroZero;
-
-      console.log('Usando coordenadas EXIF:', processedImage.metadata.coordinates);
-      console.log('hasValidCoordinates:', photoData.hasValidCoordinates);
-
-    } else {
-      // No hay coordenadas EXIF válidas, usar [0,0]
-      photoData.location = {
-        type: 'Point',
-        coordinates: [0, 0],
+        coordinates: [processedImage.metadata.coordinates.lon, processedImage.metadata.coordinates.lat],
         name: null
       };
-
-      // No tiene coordenadas válidas
+      photoData.hasValidCoordinates = true;
+      photoData.geocodingStatus = 'pending';
+    } else {
+      // Si no hay coordenadas EXIF válidas, usar null
+      photoData.location = null;
       photoData.hasValidCoordinates = false;
-
-      console.log('No se encontraron coordenadas EXIF, usando [0,0]');
-      console.log('hasValidCoordinates: false');
+      photoData.geocodingStatus = 'not_applicable';
     }
 
-    // Guardar foto en DB
-    const photo = await photoService.createPhoto(photoData, req.user.id);
+    const photo = await Photo.create(photoData);
 
-    return success(res, { photo }, 201);
-  } catch (err) {
-    next(err);
+    // Si tiene coordenadas válidas, encolar para geocoding
+    if (photo.hasValidCoordinates) {
+      await queuePhotoForGeocoding(photo._id);
+    }
+
+    return success(res, { photo });
+  } catch (error) {
+    console.error('Error al crear la foto:', error);
+    return next(error);
   }
 };
 
@@ -233,103 +161,72 @@ function parseDecimalCoordinates(coordString) {
 // Actualizar foto
 exports.updatePhoto = async (req, res, next) => {
   try {
-    // Primero obtener la foto actual
-    const currentPhoto = await photoService.getPhotoById(req.params.id);
+    const { id } = req.params;
+    const updateData = { ...req.body };
 
-    // Preparar datos de actualización
-    const updateData = {
-      title: req.body.title,
-      description: req.body.description,
-      labels: req.body.labels
-        ? (Array.isArray(req.body.labels)
-          ? req.body.labels
-          : req.body.labels.split(','))
-        : undefined,
-      isPublic: req.body.isPublic !== undefined
-        ? (typeof req.body.isPublic === 'string'
-          ? req.body.isPublic.toLowerCase() === 'true'
-          : Boolean(req.body.isPublic))
-        : undefined,
-      reviewed: true
-    };
+    // Si vienen coordenadas, procesarlas
+    if (updateData.coordinates) {
+      console.log('Procesando coordenadas:', updateData.coordinates);
 
-    // Manejar actualización de coordenadas
-    if (req.body.coordinates) {
+      // Si las coordenadas vienen como array, convertirlas a string
+      const coordString = Array.isArray(updateData.coordinates)
+        ? updateData.coordinates.join(',')
+        : updateData.coordinates;
+
       try {
-        let parsedCoord;
-        console.log('Procesando coordenadas:', req.body.coordinates);
-
-        // Intentar determinar el formato y parsear
-        if (req.body.coordinates.includes('°')) {
-          // Formato DMS
-          console.log('Detectado formato DMS');
-          parsedCoord = parseDMS(req.body.coordinates);
-        } else if (req.body.coordinates.includes(',')) {
-          // Probable formato decimal lat,lng
-          console.log('Detectado formato decimal');
-          parsedCoord = parseDecimalCoordinates(req.body.coordinates);
-        } else {
-          // Intentar con coord-parser como fallback
-          console.log('Intentando con coord-parser');
-          parsedCoord = coordParser(req.body.coordinates);
+        const parsedCoords = coordParser(coordString);
+        if (parsedCoords) {
+          updateData.coordinates = [parsedCoords.lon, parsedCoords.lat];
+          updateData.hasValidCoordinates = true;
         }
-
-        console.log('Coordenadas parseadas:', parsedCoord);
-
-        // Verificar que ambas coordenadas son válidas
-        if (parsedCoord &&
-          parsedCoord.lat !== undefined && parsedCoord.lng !== undefined &&
-          !isNaN(parsedCoord.lat) && !isNaN(parsedCoord.lng)) {
-
-          // El formato para MongoDB es [longitud, latitud]
-          const coordinates = [parsedCoord.lng, parsedCoord.lat];
-
-          // Verificar si son coordenadas no nulas (0,0)
-          const isValidCoordinates = parsedCoord.lng !== 0 || parsedCoord.lat !== 0;
-
-          console.log('Coordenadas finales para MongoDB:', coordinates);
-          console.log('¿Son coordenadas válidas?', isValidCoordinates);
-
-          updateData.location = {
-            type: 'Point',
-            coordinates: coordinates
-          };
-
-          // Si también se proporciona un nombre de ubicación, incluirlo
-          if (req.body.locationName) {
-            updateData.location.name = req.body.locationName;
-          } else if (currentPhoto.location && currentPhoto.location.name) {
-            // Mantener el nombre actual si existe
-            updateData.location.name = currentPhoto.location.name;
-          }
-
-          // Actualizar flag hasValidCoordinates solo si:
-          // 1. La foto no tenía coordenadas válidas antes Y
-          // 2. Las nuevas coordenadas son válidas (no 0,0)
-          if (!currentPhoto.hasValidCoordinates && isValidCoordinates) {
-            updateData.hasValidCoordinates = true;
-            console.log('Actualizando hasValidCoordinates a true');
-          }
-
-          // Marcar para re-geocodificación
-          updateData.geocodingStatus = 'pending';
-
-          console.log('Actualizando coordenadas a:', coordinates);
-        } else {
-          console.log('Error en validación:', parsedCoord);
-          return next(new AppError('No se pudieron extraer coordenadas completas del formato proporcionado', 400));
-        }
-      } catch (coordError) {
-        console.log('Error al parsear coordenadas:', coordError);
-        return next(new AppError(`No se pudo interpretar las coordenadas: ${coordError.message}`, 400));
+      } catch (error) {
+        console.error('Error al parsear coordenadas:', error);
+        return next(new AppError('No se pudo interpretar las coordenadas: ' + error.message, 400));
       }
     }
 
-    const photo = await photoService.updatePhoto(req.params.id, updateData, req.user.id);
+    // Manejar actualización de fecha
+    if (updateData.date) {
+      const photo = await Photo.findById(id);
+      if (!photo) {
+        return next(new AppError('No se encontró la foto', 404));
+      }
+
+      // Usar el timestamp existente como base
+      const currentDate = new Date(photo.timestamp);
+      const [year, month, day] = updateData.date.split('-').map(Number);
+
+      // Si viene hora, actualizarla
+      if (updateData.time) {
+        const [hours, minutes] = updateData.time.split(':').map(Number);
+        currentDate.setHours(hours, minutes);
+      }
+
+      // Actualizar la fecha manteniendo la hora si no se especificó
+      currentDate.setFullYear(year, month - 1, day);
+
+      // Actualizar el timestamp
+      updateData.timestamp = currentDate;
+
+      // Limpiar los campos auxiliares
+      delete updateData.date;
+      delete updateData.time;
+    }
+
+    const photo = await Photo.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    if (!photo) {
+      return next(new AppError('No se encontró la foto', 404));
+    }
 
     return success(res, { photo });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    console.error('Error al actualizar la foto:', error);
+    return next(error);
   }
 };
 
@@ -678,61 +575,46 @@ exports.getPhotoCalendarStats = async (req, res, next) => {
 
     console.log(`Calculando estadísticas para: mes=${monthNum}, año=${yearNum}`);
 
-    // Calcular fecha de inicio (primer día del mes especificado en UTC)
-    // Usamos UTC para todas las fechas para evitar problemas de zona horaria
-    const startDate = new Date(Date.UTC(yearNum, monthNum - 1, 1, 0, 0, 0, 0));
-
-    // Calcular fecha de fin (último día del mes siguiente en UTC)
-    let nextMonth, nextYear;
-
-    if (monthNum === 12) {
-      // Diciembre -> Enero del año siguiente
-      nextMonth = 1;
-      nextYear = yearNum + 1;
-    } else {
-      // Cualquier otro mes -> Mes siguiente del mismo año
-      nextMonth = monthNum + 1;
-      nextYear = yearNum;
-    }
-
-    // Último día del mes siguiente en UTC (a las 23:59:59.999)
-    const endDate = new Date(Date.UTC(nextYear, nextMonth, 0, 23, 59, 59, 999));
-
-    console.log('Rango de fechas en UTC:',
-      `De: ${startDate.toISOString()}`,
-      `A: ${endDate.toISOString()}`);
-
     // Preparar el filtro de consulta
     const matchQuery = {
-      timestamp: { $gte: startDate, $lte: endDate },
       isPublic: true, // Solo fotos públicas para el mapa
       userId: new mongoose.Types.ObjectId(req.user.id) // Siempre filtrar por el usuario logueado
     };
 
     // Query para obtener el conteo de fotos por día
-    // Usamos operadores de fecha que respetan timezone
     const results = await Photo.aggregate([
       {
         $match: matchQuery
       },
       {
-        $group: {
-          _id: {
-            // Usamos $dateToString para asegurar que las fechas se traten en UTC
-            date: {
-              $dateToString: {
-                format: "%Y-%m-%d",
-                date: "$timestamp"
-              }
+        $addFields: {
+          // Extraer fecha, mes y año directamente del timestamp
+          photoDate: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$timestamp"
             }
           },
+          photoMonth: { $month: "$timestamp" },
+          photoYear: { $year: "$timestamp" }
+        }
+      },
+      {
+        $match: {
+          photoMonth: monthNum,
+          photoYear: yearNum
+        }
+      },
+      {
+        $group: {
+          _id: "$photoDate",
           count: { $sum: 1 }
         }
       },
       {
         $project: {
           _id: 0,
-          date: "$_id.date",
+          date: "$_id",
           count: 1
         }
       },
