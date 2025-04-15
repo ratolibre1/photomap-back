@@ -44,7 +44,7 @@ exports.createPhoto = async (photoData, userId) => {
       photoToCreate.geocodingStatus = 'pending';
     } else {
       // No tiene coordenadas válidas
-      photoToCreate.geocodingStatus = 'failed';
+      photoToCreate.geocodingStatus = 'error';
     }
 
     const photo = new Photo(photoToCreate);
@@ -172,19 +172,19 @@ exports.searchPhotos = async (filters = {}, options = {}, user) => {
 
   // En searchPhotos, agregar soporte para filtrar por IDs de entidades geográficas
   if (filters.countryId) {
-    query['geocodingDetails.countryId'] = filters.countryId;
+    query['geocodingDetails.countryId'] = new mongoose.Types.ObjectId(filters.countryId);
   }
 
   if (filters.regionId) {
-    query['geocodingDetails.regionId'] = filters.regionId;
+    query['geocodingDetails.regionId'] = new mongoose.Types.ObjectId(filters.regionId);
   }
 
   if (filters.countyId) {
-    query['geocodingDetails.countyId'] = filters.countyId;
+    query['geocodingDetails.countyId'] = new mongoose.Types.ObjectId(filters.countyId);
   }
 
   if (filters.cityId) {
-    query['geocodingDetails.cityId'] = filters.cityId;
+    query['geocodingDetails.cityId'] = new mongoose.Types.ObjectId(filters.cityId);
   }
 
   // Opciones de ordenación

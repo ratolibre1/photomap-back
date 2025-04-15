@@ -356,10 +356,10 @@ exports.processPendingPhotos = async (options = {}) => {
       'location.coordinates.1': { $ne: 0 }
     };
 
-    // Si no se fuerza, solo procesar las pendientes/fallidas
+    // Si no se fuerza, solo procesar las pendientes/error
     if (!options.force) {
       filter.$or = [
-        { geocodingStatus: { $in: ['pending', 'failed'] } },
+        { geocodingStatus: { $in: ['pending', 'error'] } },
         { geocodingStatus: { $exists: false } },
         { geocodingStatus: null }
       ];
@@ -386,8 +386,8 @@ exports.processPendingPhotos = async (options = {}) => {
 
     for (const photo of photos) {
       try {
-        // Marcar como en procesamiento
-        photo.geocodingStatus = 'processing';
+        // Marcar como en procesamiento temporal
+        photo.geocodingStatus = 'pending';
         await photo.save();
 
         // Obtener coordenadas de la foto
@@ -441,22 +441,43 @@ exports.processPendingPhotos = async (options = {}) => {
           console.log(`✅ Asignando cityId: ${geocodeResult.city._id}`);
         }
 
-        // Asignar a la foto y guardar estado
-        photo.geocodingDetails = geocodingDetails;
-        console.log('Guardando geocodingDetails:', JSON.stringify(geocodingDetails));
+        // Asegurarse de que el objeto geocodingDetails sea válido
+        console.log('Objeto geocodingDetails completo:', JSON.stringify(geocodingDetails));
 
-        photo.geocodingStatus = 'completed';
-        await photo.save();
+        // Guardar usando findByIdAndUpdate para evitar problemas con pre-save hooks
+        const updatedPhoto = await Photo.findByIdAndUpdate(
+          photo._id,
+          {
+            $set: {
+              geocodingDetails: geocodingDetails,
+              geocodingStatus: 'completed'
+            }
+          },
+          { new: true }
+        );
 
-        // Verificar qué se guardó realmente
+        if (!updatedPhoto) {
+          console.error(`❌ Error: No se pudo actualizar la foto ${photo._id}`);
+          errors++;
+          continue;
+        }
+
+        // Verificar que se guardó correctamente
         const savedPhoto = await Photo.findById(photo._id);
         console.log('GeocodingDetails GUARDADOS:', JSON.stringify(savedPhoto.geocodingDetails));
+        if (!savedPhoto.geocodingDetails) {
+          console.error(`❌ Error: geocodingDetails no se guardó en la foto ${photo._id}`);
+          photo.geocodingStatus = 'error';
+          await Photo.findByIdAndUpdate(photo._id, { geocodingStatus: 'error' });
+          errors++;
+          continue;
+        }
 
         processed++;
       } catch (error) {
         console.error(`Error geocodificando foto ${photo._id}:`, error);
-        photo.geocodingStatus = 'failed';
-        await photo.save();
+        photo.geocodingStatus = 'error';
+        await Photo.findByIdAndUpdate(photo._id, { geocodingStatus: 'error' });
         errors++;
       }
     }
@@ -477,63 +498,259 @@ exports.processPendingPhotos = async (options = {}) => {
 };
 
 function parseLocationFromNominatim(data) {
+  console.log('Respuesta de Nominatim:', JSON.stringify(data));
+
+  // Caso especial: si ya recibimos un objeto pre-procesado con los campos que necesitamos
+  if (data.country && (data.region || data.state) && data.county && (data.city || data.town || data.village)) {
+    console.log('Detectada respuesta pre-procesada, usando directamente');
+    return {
+      countryName: data.country || 'Desconocido',
+      regionName: data.region || data.state || 'Desconocido',
+      countyName: data.county || 'Desconocido',
+      cityName: data.city || data.town || data.village || 'Desconocido',
+      displayName: data.displayName || `${data.city || data.town || ''}, ${data.county || ''}, ${data.region || data.state || ''}, ${data.country || ''}`
+    };
+  }
+
   // 1. Primero detectar qué formato tenemos
   if (data.type === 'FeatureCollection' && data.features && data.features.length > 0) {
     const geocoding = data.features[0]?.properties?.geocoding;
     if (geocoding) {
       console.log('Procesando respuesta GeoCodeJSON');
       return {
-        countryName: geocoding.country,
-        regionName: geocoding.state || geocoding.admin?.level4,
-        countyName: geocoding.county || geocoding.admin?.level6,
-        cityName: geocoding.name || geocoding.admin?.level8,
-        displayName: geocoding.label
+        countryName: geocoding.country || 'Desconocido',
+        regionName: geocoding.state || geocoding.admin?.level4 || 'Desconocido',
+        countyName: geocoding.county || geocoding.admin?.level6 || 'Desconocido',
+        cityName: geocoding.name || geocoding.admin?.level8 || 'Desconocido',
+        displayName: geocoding.label || 'Ubicación desconocida'
       };
     }
   }
 
-  // 2. Formato JSON estándar - Con mejor manejo de países
-  console.log('Procesando respuesta JSON estándar');
+  // 2. Formato JSON estándar con enfoque universal
+  console.log('Procesando respuesta JSON estándar Nominatim');
   const address = data.address || {};
 
+  // Primero obtener todos los campos disponibles para analizar
+  console.log('Campos disponibles en respuesta:', Object.keys(address));
+
   // Extraer país (casi siempre igual en todos lados)
-  const countryName = address.country;
+  const countryName = address.country || 'Desconocido';
 
-  // Extraer ciudad (varía según país y tipo de asentamiento)
-  const cityName = address.city || address.town || address.village ||
-    address.hamlet || address.suburb || address.neighbourhood ||
-    data.name; // En algunos casos el nombre principal es la ciudad
+  // Enfoque universal: recopilar todos los posibles niveles administrativos
+  const adminLevels = [];
 
-  // Para región y provincia necesitamos lógica específica por país
-  let regionName, countyName;
+  // Recopilar todos los campos que parecen ser divisiones administrativas
+  for (const key in address) {
+    if (key.startsWith('state') ||
+      key.startsWith('region') ||
+      key.startsWith('province') ||
+      key.startsWith('county') ||
+      key.startsWith('municipality') ||
+      key.startsWith('city') ||
+      key.startsWith('town') ||
+      key.startsWith('village') ||
+      key.startsWith('hamlet') ||
+      key.startsWith('district') ||
+      key.startsWith('locality') ||
+      key.startsWith('suburb')) {
 
-  // Varios países latinoamericanos usan este patrón
-  if (address.country_code === 'pe' || address.country_code === 'cl' ||
-    address.country_code === 'ar' || address.country_code === 'co') {
-    regionName = address.state;           // Departamento/Provincia/Región 
-    countyName = address.region;          // Provincia/Departamento
+      adminLevels.push({
+        name: address[key],
+        type: key
+      });
+    }
   }
-  // EEUU y otros países con organización similar
-  else if (address.country_code === 'us' || address.country_code === 'ca') {
-    regionName = address.state;           // Estado/Provincia
-    countyName = address.county;          // Condado
-  }
-  // Europa y general
-  else {
-    regionName = address.state || address.province || address.region ||
-      address.county_division;
-    countyName = address.county || address.district || address.municipality;
+
+  console.log('Niveles administrativos encontrados:', adminLevels);
+
+  // Ordenar por nivel jerárquico aproximado (más grande a más pequeño)
+  const hierarchy = [
+    'state', 'region', 'province',  // Nivel 1 (Regiones/Estados)
+    'county', 'district',           // Nivel 2 (Provincias/Condados)
+    'municipality', 'locality',     // Nivel 3 (Municipios)
+    'city', 'town', 'village', 'hamlet', 'suburb' // Nivel 4 (Ciudades/Localidades)
+  ];
+
+  // Ordenar los niveles según la jerarquía
+  adminLevels.sort((a, b) => {
+    const aIndex = hierarchy.findIndex(prefix => a.type.startsWith(prefix));
+    const bIndex = hierarchy.findIndex(prefix => b.type.startsWith(prefix));
+    return aIndex - bIndex;
+  });
+
+  console.log('Niveles ordenados jerárquicamente:', adminLevels);
+
+  // Extraer valores según su nivel
+  let regionName = 'Desconocido';
+  let countyName = 'Desconocido';
+  let cityName = 'Desconocido';
+
+  // Buscar el primer nivel (región)
+  const regionLevel = adminLevels.find(level =>
+    level.type.startsWith('state') ||
+    level.type.startsWith('region') ||
+    level.type.startsWith('province'));
+
+  if (regionLevel) {
+    regionName = regionLevel.name;
   }
 
-  // Loguear para análisis y depuración
-  console.log(`País detectado: ${countryName} (${address.country_code})`);
-  console.log(`Estructura extraída: Región=${regionName}, Provincia=${countyName}, Ciudad=${cityName}`);
+  // Buscar el segundo nivel (provincia/condado)
+  const countyLevel = adminLevels.find(level =>
+    level.type.startsWith('county') ||
+    level.type.startsWith('district'));
+
+  if (countyLevel) {
+    countyName = countyLevel.name;
+  }
+
+  // Buscar el tercer/cuarto nivel (ciudad/localidad)
+  const cityLevel = adminLevels.find(level =>
+    level.type.startsWith('city') ||
+    level.type.startsWith('town') ||
+    level.type.startsWith('village') ||
+    level.type.startsWith('hamlet') ||
+    level.type.startsWith('suburb') ||
+    level.type.startsWith('municipality'));
+
+  if (cityLevel) {
+    cityName = cityLevel.name;
+  }
+
+  // Fallbacks para asegurar que siempre tenemos datos
+  if (regionName === 'Desconocido' && countyName !== 'Desconocido') {
+    regionName = `Región de ${countyName}`;
+  }
+
+  if (countyName === 'Desconocido' && cityName !== 'Desconocido') {
+    countyName = `Provincia de ${cityName}`;
+  }
+
+  if (cityName === 'Desconocido') {
+    // Usar el nombre principal si está disponible
+    cityName = data.name || 'Ubicación desconocida';
+  }
+
+  console.log(`Estructura extraída final: País=${countryName}, Región=${regionName}, Provincia=${countyName}, Ciudad=${cityName}`);
 
   return {
     countryName,
     regionName,
     countyName,
     cityName,
-    displayName: data.display_name
+    displayName: data.display_name || 'Ubicación desconocida'
   };
-} 
+}
+
+/**
+ * Procesa la geocodificación de una foto
+ * @param {String} photoId - ID de la foto a procesar
+ * @returns {Promise<Boolean>} - Resultado de la operación
+ */
+exports.processPhotoGeocoding = async (photoId) => {
+  try {
+    console.log(`Procesando geocodificación para foto: ${photoId}`);
+
+    // Buscar la foto por ID
+    const photo = await Photo.findById(photoId);
+
+    if (!photo) {
+      console.error(`No se encontró la foto con ID: ${photoId}`);
+      return false;
+    }
+
+    // Verificar que tenga coordenadas válidas
+    if (!photo.hasValidCoordinates || !photo.location || !photo.location.coordinates) {
+      console.error(`La foto ${photoId} no tiene coordenadas válidas`);
+      await Photo.findByIdAndUpdate(photoId, { geocodingStatus: 'error' });
+      return false;
+    }
+
+    // Extraer coordenadas (formato [lon, lat] en MongoDB)
+    const [lon, lat] = photo.location.coordinates;
+
+    // Actualizar estado a "processing"
+    await Photo.findByIdAndUpdate(photoId, { geocodingStatus: 'pending' });
+
+    // Obtener información de ubicación mediante Nominatim
+    const locationInfo = await exports.getLocationInfo(lat, lon);
+
+    if (!locationInfo) {
+      console.error(`No se pudo obtener información de ubicación para foto ${photoId}`);
+      await Photo.findByIdAndUpdate(photoId, { geocodingStatus: 'error' });
+      return false;
+    }
+
+    console.log('Información de ubicación obtenida:', JSON.stringify(locationInfo));
+
+    // Extraer información directamente del resultado (sin parseLocationFromNominatim)
+    const countryName = locationInfo.country || 'Desconocido';
+    const regionName = locationInfo.region || 'Desconocido';
+    const countyName = locationInfo.county || 'Desconocido';
+    const cityName = locationInfo.city || 'Desconocido';
+    const displayName = locationInfo.displayName || `${cityName}, ${countyName}, ${regionName}, ${countryName}`;
+
+    console.log(`Datos extraídos: País=${countryName}, Región=${regionName}, Provincia=${countyName}, Ciudad=${cityName}`);
+
+    // Crear o encontrar registros en la base de datos
+    const country = await findOrCreateCountry(countryName, photo.userId);
+
+    let region = null;
+    if (country && country._id) {
+      region = await findOrCreateRegion(regionName, country._id, photo.userId);
+    }
+
+    let county = null;
+    if (region && region._id && country && country._id) {
+      county = await findOrCreateCounty(countyName, region._id, country._id, photo.userId);
+    }
+
+    let city = null;
+    if (county && county._id && region && region._id && country && country._id) {
+      city = await findOrCreateCity(cityName, county._id, region._id, country._id, photo.userId);
+    }
+
+    // Preparar datos para actualizar la foto
+    const geocodingDetails = {
+      country: country ? {
+        id: country._id,
+        name: country.name
+      } : null,
+      region: region ? {
+        id: region._id,
+        name: region.name
+      } : null,
+      county: county ? {
+        id: county._id,
+        name: county.name
+      } : null,
+      city: city ? {
+        id: city._id,
+        name: city.name
+      } : null,
+      displayName: displayName
+    };
+
+    console.log(`Detalles de geocodificación para foto ${photoId}:`, JSON.stringify(geocodingDetails));
+
+    // Actualizar foto con los detalles de ubicación y cambiar estado a "completed"
+    await Photo.findByIdAndUpdate(photoId, {
+      'geocodingStatus': 'completed',
+      'location.name': displayName,
+      'geocodingDetails': geocodingDetails
+    });
+
+    console.log(`Geocodificación completada con éxito para foto ${photoId}`);
+    return true;
+  } catch (error) {
+    console.error(`Error procesando geocodificación para foto ${photoId}:`, error);
+    // Actualizar estado en caso de error
+    try {
+      await Photo.findByIdAndUpdate(photoId, { geocodingStatus: 'error' });
+    } catch (updateError) {
+      console.error(`Error adicional al actualizar estado de geocodificación:`, updateError);
+    }
+    return false;
+  }
+}; 
