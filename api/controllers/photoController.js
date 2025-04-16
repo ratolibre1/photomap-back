@@ -165,6 +165,39 @@ exports.createPhoto = async (req, res, next) => {
       fileHash: processedImage.fileHash // Guardamos el hash para futuras validaciones
     };
 
+    // Procesar etiquetas (labels) si vienen en el body
+    if (req.body.labels) {
+      console.log('Procesando etiquetas en createPhoto:', req.body.labels);
+
+      try {
+        // Convertir a array si viene como string JSON
+        let labelsArray = req.body.labels;
+        if (typeof labelsArray === 'string') {
+          try {
+            labelsArray = JSON.parse(labelsArray);
+          } catch (e) {
+            // Si no es JSON válido, intentar separar por comas
+            labelsArray = labelsArray.split(',');
+          }
+        }
+
+        // Asegurarse de que sea un array
+        if (!Array.isArray(labelsArray)) {
+          labelsArray = [labelsArray];
+        }
+
+        // Filtrar para tener solo IDs válidos
+        const validLabels = labelsArray.filter(labelId =>
+          mongoose.Types.ObjectId.isValid(labelId)
+        );
+
+        console.log('Etiquetas válidas para nueva foto:', validLabels);
+        photoData.labels = validLabels;
+      } catch (error) {
+        console.error('Error procesando etiquetas:', error);
+      }
+    }
+
     // Procesar coordenadas EXIF si existen
     if (processedImage.metadata?.coordinates &&
       Array.isArray(processedImage.metadata.coordinates) &&
@@ -268,6 +301,41 @@ exports.updatePhoto = async (req, res, next) => {
     const { id } = req.params;
     const updateData = { ...req.body };
 
+    console.log('Datos de actualización recibidos:', updateData);
+
+    // Al actualizar datos, marcar como reviewed
+    updateData.reviewed = true;
+
+    // Procesar etiquetas (labels)
+    if (updateData.labels) {
+      console.log('Procesando etiquetas:', updateData.labels);
+
+      // Asegurarse de que labels sea un array
+      if (!Array.isArray(updateData.labels)) {
+        // Si viene como string, intentar parsearlo como JSON
+        try {
+          if (typeof updateData.labels === 'string') {
+            updateData.labels = JSON.parse(updateData.labels);
+          } else {
+            // Si no es string ni array, convertirlo a array
+            updateData.labels = [updateData.labels];
+          }
+        } catch (error) {
+          console.error('Error parseando labels:', error);
+          return next(new AppError('Formato inválido para etiquetas', 400));
+        }
+      }
+
+      // Validar que cada etiqueta sea un ID válido
+      const validLabels = updateData.labels.filter(labelId =>
+        mongoose.Types.ObjectId.isValid(labelId)
+      );
+
+      console.log('Etiquetas válidas:', validLabels);
+      updateData.labels = validLabels;
+      // NO marcamos edited=true aquí
+    }
+
     // Si vienen coordenadas, procesarlas
     if (updateData.coordinates) {
       console.log('Procesando coordenadas:', updateData.coordinates);
@@ -288,7 +356,7 @@ exports.updatePhoto = async (req, res, next) => {
           };
           updateData.hasValidCoordinates = true;
           updateData.geocodingStatus = 'pending';
-          updateData.edited = true;
+          // NO marcamos edited=true aquí, ya estamos marcando reviewed=true arriba
 
           // Eliminar coordenadas ya que se han procesado
           delete updateData.coordinates;
@@ -323,7 +391,7 @@ exports.updatePhoto = async (req, res, next) => {
       updateData.timestamp = currentDate;
       // Marcar como válido ya que el usuario ingresó la fecha manualmente
       updateData.hasValidTimestamp = true;
-      updateData.edited = true;
+      // NO marcamos edited=true aquí, ya estamos marcando reviewed=true arriba
 
       // Limpiar los campos auxiliares
       delete updateData.date;

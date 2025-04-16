@@ -66,7 +66,11 @@ const photoSchema = new Schema({
     type: Boolean,
     default: false
   },
-  fileHash: String
+  fileHash: String,
+  labels: [{
+    type: Schema.Types.ObjectId,
+    ref: 'Label'
+  }]
 }, {
   timestamps: true
 });
