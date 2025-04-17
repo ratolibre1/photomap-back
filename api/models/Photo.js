@@ -51,8 +51,18 @@ const photoSchema = new Schema({
   },
   geocodingStatus: {
     type: String,
-    enum: ['pending', 'completed', 'error', 'not_applicable'],
+    enum: ['pending', 'completed', 'error', 'not_applicable', 'completed_with_errors'],
     default: 'not_applicable'
+  },
+  // Detalles de geocodificación
+  geocodingDetails: {
+    displayName: String,
+    countryId: { type: Schema.Types.ObjectId, ref: 'Country' },
+    regionId: { type: Schema.Types.ObjectId, ref: 'Region' },
+    countyId: { type: Schema.Types.ObjectId, ref: 'County' },
+    cityId: { type: Schema.Types.ObjectId, ref: 'City' },
+    updatedAt: Date,
+    geocodingError: String
   },
   isPublic: {
     type: Boolean,

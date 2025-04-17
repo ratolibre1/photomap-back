@@ -96,18 +96,54 @@ exports.getMapById = async (mapId, userId = null) => {
 /**
  * Obtiene un mapa público por su ID de compartir
  * @param {String} shareId - ID único para compartir
+ * @param {String} ipAddress - Dirección IP del visitante
  * @returns {Promise<Object>} - Mapa encontrado
  */
-exports.getMapByShareId = async (shareId) => {
-  const map = await PublicMap.findOne({ shareId, isActive: true });
+exports.getMapByShareId = async (shareId, ipAddress) => {
+  const map = await PublicMap.findOne({ shareId, isPublic: true });
 
   if (!map) {
-    throw new AppError('Mapa no encontrado o desactivado', 404);
+    throw new AppError('Mapa no encontrado o es privado', 404);
   }
 
-  // Actualizar estadísticas de visualización
-  map.stats.viewCount += 1;
+  // Inicializar stats.visitors si no existe
+  if (!map.stats.visitors) {
+    map.stats.visitors = [];
+  }
+
+  // Verificar si tenemos la IP registrada
+  const oneDayInMs = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
+  const existingVisitor = map.stats.visitors.find(visitor => visitor.ip === ipAddress);
+
+  let shouldCountNewView = true;
+
+  if (existingVisitor) {
+    const timeDiff = new Date() - new Date(existingVisitor.timestamp);
+
+    // Si ha pasado menos de un día, no contamos como nueva visita
+    if (timeDiff < oneDayInMs) {
+      shouldCountNewView = false;
+    } else {
+      // Actualizar el timestamp del visitante existente
+      existingVisitor.timestamp = new Date();
+    }
+  } else {
+    // Nuevo visitante, agregarlo a la lista
+    map.stats.visitors.push({
+      ip: ipAddress,
+      timestamp: new Date()
+    });
+  }
+
+  if (shouldCountNewView) {
+    // Incrementar contador de vistas si corresponde
+    map.stats.viewCount += 1;
+  }
+
+  // Siempre actualizar la fecha de última visualización
   map.stats.lastViewed = new Date();
+
+  // Guardar los cambios
   await map.save();
 
   return map;
@@ -128,7 +164,7 @@ exports.updateMap = async (mapId, updateData, userId) => {
   if (updateData.description) map.description = updateData.description;
   if (updateData.filters) map.filters = updateData.filters;
   if (updateData.displayOptions) map.displayOptions = updateData.displayOptions;
-  if (updateData.isActive !== undefined) map.isActive = updateData.isActive;
+  if (updateData.isPublic !== undefined) map.isPublic = updateData.isPublic;
   if (updateData.language && ['es', 'en'].includes(updateData.language)) {
     map.language = updateData.language;
   }

@@ -229,117 +229,152 @@ async function findOrCreateCity(cityName, countyId, regionId, countryId, userId)
  * Geocodificación inversa para una coordenada
  */
 exports.reverseGeocode = async (coordinates, photo) => {
-  try {
-    // Volver al formato JSON estándar 
-    const response = await axios.get(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coordinates[0]}&lon=${coordinates[1]}&zoom=10`,
-      {
-        headers: {
-          'User-Agent': 'PhotoMap App (desarrollo/testing)'
+  const MAX_RETRIES = 3;
+  const TIMEOUT_MS = 5000; // 5 segundos de timeout
+  const RETRY_DELAY_MS = 2000; // 2 segundos entre reintentos
+
+  // Función para esperar un tiempo determinado
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  let attempt = 0;
+  let lastError = null;
+
+  while (attempt < MAX_RETRIES) {
+    attempt++;
+    try {
+      console.log(`Intento ${attempt}/${MAX_RETRIES} de geocodificación para coordenadas [${coordinates[0]}, ${coordinates[1]}]`);
+
+      // Volver al formato JSON estándar con timeout
+      const response = await axios.get(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coordinates[0]}&lon=${coordinates[1]}&zoom=10`,
+        {
+          headers: {
+            'User-Agent': 'PhotoMap App (desarrollo/testing)'
+          },
+          timeout: TIMEOUT_MS // Agregamos timeout para evitar esperas indefinidas
         }
-      }
-    );
+      );
 
-    if (response.data) {
-      // Extraer datos de ubicación con mejor manejo de países
-      const { countryName, regionName, countyName, cityName, displayName } = parseLocationFromNominatim(response.data);
+      if (response.data) {
+        // Extraer datos de ubicación con mejor manejo de países
+        const { countryName, regionName, countyName, cityName, displayName } = parseLocationFromNominatim(response.data);
 
-      // Verificar que tenemos userId antes de continuar
-      if (!photo.userId) {
-        console.error(`La foto ${photo._id} no tiene userId, no se pueden crear entidades geográficas`);
-        return {
-          displayName: displayName || `${coordinates[0]}, ${coordinates[1]}`,
-          raw: response.data.address || {}
+        // Verificar que tenemos userId antes de continuar
+        if (!photo.userId) {
+          console.error(`La foto ${photo._id} no tiene userId, no se pueden crear entidades geográficas`);
+          return {
+            displayName: displayName || `${coordinates[0]}, ${coordinates[1]}`,
+            raw: response.data.address || {}
+          };
+        }
+
+        console.log('Datos extraídos:', { countryName, regionName, countyName, cityName });
+
+        // Mejorar manejo de errores para country
+        let countryObj = null;
+        if (countryName) {
+          try {
+            countryObj = await findOrCreateCountry(countryName, photo.userId);
+            console.log(`País obtenido/creado: ${countryName}`, countryObj?._id);
+          } catch (err) {
+            console.error(`Error al procesar país ${countryName}:`, err);
+          }
+        }
+
+        // Mejorar manejo de errores para region
+        let regionObj = null;
+        if (regionName) {
+          try {
+            const countryIdToUse = countryObj ? countryObj._id : null;
+            if (countryIdToUse) {
+              regionObj = await findOrCreateRegion(regionName, countryIdToUse, photo.userId);
+            } else {
+              console.log(`No se pudo crear región ${regionName} porque falta el país`);
+            }
+            console.log(`Región obtenida/creada: ${regionName}`, regionObj?._id);
+          } catch (err) {
+            console.error(`Error al procesar región ${regionName}:`, err);
+          }
+        }
+
+        // Mejorar manejo de errores para county
+        let countyObj = null;
+        if (countyName) {
+          try {
+            const regionIdToUse = regionObj ? regionObj._id : null;
+            const countryIdToUse = countryObj ? countryObj._id : null;
+            if (regionIdToUse && countryIdToUse) {
+              countyObj = await findOrCreateCounty(countyName, regionIdToUse, countryIdToUse, photo.userId);
+            } else {
+              console.log(`No se pudo crear condado ${countyName} porque faltan región o país`);
+            }
+            console.log(`Condado obtenido/creado: ${countyName}`, countyObj?._id);
+          } catch (err) {
+            console.error(`Error al procesar condado ${countyName}:`, err);
+          }
+        }
+
+        // Mejorar manejo de errores para city
+        let cityObj = null;
+        if (cityName && countyObj && regionObj && countryObj) {
+          try {
+            cityObj = await findOrCreateCity(cityName, countyObj._id, regionObj._id, countryObj._id, photo.userId);
+            console.log(`Ciudad obtenida/creada: ${cityName}`, cityObj?._id);
+          } catch (err) {
+            console.error(`Error al procesar ciudad ${cityName}:`, err);
+          }
+        }
+
+        console.log('Datos de ubicación extraídos:', {
+          country: countryObj,
+          region: regionObj,
+          county: countyObj,
+          city: cityObj,
+          displayName: displayName,
+          savedCountry: countryObj?._id || null,
+          savedRegion: regionObj?._id || null,
+          savedCounty: countyObj?._id || null,
+          savedCity: cityObj?._id || null
+        });
+
+        // Construir respuesta
+        const result = {
+          country: countryObj,
+          region: regionObj,
+          county: countyObj,
+          city: cityObj,
+          displayName: displayName,
+          raw: response.data.address || {} // Guardar la respuesta completa para debugging
         };
+
+        return result;
       }
 
-      console.log('Datos extraídos:', { countryName, regionName, countyName, cityName });
+      throw new Error('No se encontraron resultados para estas coordenadas');
+    } catch (error) {
+      lastError = error;
+      console.error(`Error en intento ${attempt} de reverseGeocode para coordenadas ${coordinates}:`, error.message);
 
-      // Mejorar manejo de errores para country
-      let countryObj = null;
-      if (countryName) {
-        try {
-          countryObj = await findOrCreateCountry(countryName, photo.userId);
-          console.log(`País obtenido/creado: ${countryName}`, countryObj?._id);
-        } catch (err) {
-          console.error(`Error al procesar país ${countryName}:`, err);
-        }
+      // Si no es el último intento, esperar antes del siguiente
+      if (attempt < MAX_RETRIES) {
+        console.log(`Esperando ${RETRY_DELAY_MS / 1000} segundos antes del siguiente intento...`);
+        await sleep(RETRY_DELAY_MS);
       }
-
-      // Mejorar manejo de errores para region
-      let regionObj = null;
-      if (regionName) {
-        try {
-          const countryIdToUse = countryObj ? countryObj._id : null;
-          if (countryIdToUse) {
-            regionObj = await findOrCreateRegion(regionName, countryIdToUse, photo.userId);
-          } else {
-            console.log(`No se pudo crear región ${regionName} porque falta el país`);
-          }
-          console.log(`Región obtenida/creada: ${regionName}`, regionObj?._id);
-        } catch (err) {
-          console.error(`Error al procesar región ${regionName}:`, err);
-        }
-      }
-
-      // Mejorar manejo de errores para county
-      let countyObj = null;
-      if (countyName) {
-        try {
-          const regionIdToUse = regionObj ? regionObj._id : null;
-          const countryIdToUse = countryObj ? countryObj._id : null;
-          if (regionIdToUse && countryIdToUse) {
-            countyObj = await findOrCreateCounty(countyName, regionIdToUse, countryIdToUse, photo.userId);
-          } else {
-            console.log(`No se pudo crear condado ${countyName} porque faltan región o país`);
-          }
-          console.log(`Condado obtenido/creado: ${countyName}`, countyObj?._id);
-        } catch (err) {
-          console.error(`Error al procesar condado ${countyName}:`, err);
-        }
-      }
-
-      // Mejorar manejo de errores para city
-      let cityObj = null;
-      if (cityName && countyObj && regionObj && countryObj) {
-        try {
-          cityObj = await findOrCreateCity(cityName, countyObj._id, regionObj._id, countryObj._id, photo.userId);
-          console.log(`Ciudad obtenida/creada: ${cityName}`, cityObj?._id);
-        } catch (err) {
-          console.error(`Error al procesar ciudad ${cityName}:`, err);
-        }
-      }
-
-      console.log('Datos de ubicación extraídos:', {
-        country: countryObj,
-        region: regionObj,
-        county: countyObj,
-        city: cityObj,
-        displayName: displayName,
-        savedCountry: countryObj?._id || null,
-        savedRegion: regionObj?._id || null,
-        savedCounty: countyObj?._id || null,
-        savedCity: cityObj?._id || null
-      });
-
-      // Construir respuesta
-      const result = {
-        country: countryObj,
-        region: regionObj,
-        county: countyObj,
-        city: cityObj,
-        displayName: displayName,
-        raw: response.data.address || {} // Guardar la respuesta completa para debugging
-      };
-
-      return result;
     }
-
-    throw new Error('No se encontraron resultados para estas coordenadas');
-  } catch (error) {
-    console.error(`Error en reverseGeocode para coordenadas ${coordinates}:`, error);
-    throw error;
   }
+
+  // Si llegamos aquí, fallaron todos los intentos
+  console.error(`Fallaron todos los intentos (${MAX_RETRIES}) de geocodificación. Último error:`, lastError);
+
+  // Devolver un objeto de resultado con información mínima para no romper el flujo
+  return {
+    displayName: `${coordinates[0]}, ${coordinates[1]}`,
+    raw: {},
+    error: {
+      message: lastError?.message || 'Error desconocido en geocodificación',
+      code: lastError?.code || 'UNKNOWN_ERROR'
+    }
+  };
 };
 
 /**
@@ -398,6 +433,37 @@ exports.processPendingPhotos = async (options = {}) => {
 
         // Realizar geocodificación inversa
         const geocodeResult = await exports.reverseGeocode([lat, lng], photo);
+
+        // Verificar si hay error en la respuesta (ahora reverseGeocode no lanza excepciones, devuelve un objeto con error)
+        if (geocodeResult.error) {
+          console.warn(`Advertencia: Geocodificación con errores para foto ${photo._id}: ${geocodeResult.error.message}`);
+
+          // Aunque hubo error, guardamos lo que obtuvimos para no perderlo
+          const geocodingDetails = {
+            displayName: geocodeResult.displayName || `${lat}, ${lng}`,
+            countryId: null,
+            regionId: null,
+            countyId: null,
+            cityId: null,
+            updatedAt: new Date(),
+            geocodingError: geocodeResult.error.message
+          };
+
+          // Actualizar la foto con la información limitada y marcar como procesada con advertencia
+          await Photo.findByIdAndUpdate(
+            photo._id,
+            {
+              $set: {
+                geocodingDetails: geocodingDetails,
+                geocodingStatus: 'completed_with_errors' // Nuevo estado para indicar que se procesó pero con errores
+              }
+            },
+            { new: true }
+          );
+
+          errors++;
+          continue;
+        }
 
         // Verificar qué datos devolvió reverseGeocode
         console.log('Resultado de geocodificación:', JSON.stringify({
