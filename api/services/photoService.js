@@ -35,16 +35,45 @@ exports.createPhoto = async (photoData, userId) => {
       hasLocation: !!photoToCreate.location
     });
 
+    // Validar timestamp y actualizar hasValidTimestamp
+    if (photoToCreate.timestamp instanceof Date && !isNaN(photoToCreate.timestamp.getTime())) {
+      photoToCreate.hasValidTimestamp = true;
+      console.log('La foto tiene una fecha válida:', photoToCreate.timestamp);
+    } else if (photoToCreate.timestamp) {
+      // Intentar convertir a Date si no es instancia de Date
+      try {
+        const timestampDate = new Date(photoToCreate.timestamp);
+        if (!isNaN(timestampDate.getTime())) {
+          photoToCreate.timestamp = timestampDate;
+          photoToCreate.hasValidTimestamp = true;
+          console.log('Convertida a fecha válida:', timestampDate);
+        } else {
+          photoToCreate.hasValidTimestamp = false;
+          console.log('Timestamp no válido:', photoToCreate.timestamp);
+        }
+      } catch (error) {
+        photoToCreate.hasValidTimestamp = false;
+        console.log('Error al procesar timestamp:', error.message);
+      }
+    } else {
+      photoToCreate.hasValidTimestamp = false;
+    }
+
     // Verificar si tiene coordenadas válidas para geocodificación
     if (photoToCreate.location &&
       photoToCreate.location.coordinates &&
       photoToCreate.location.coordinates.length === 2 &&
+      !isNaN(photoToCreate.location.coordinates[0]) &&
+      !isNaN(photoToCreate.location.coordinates[1]) &&
       (photoToCreate.location.coordinates[0] !== 0 || photoToCreate.location.coordinates[1] !== 0)) {
       // Marcar para procesamiento posterior
       photoToCreate.geocodingStatus = 'pending';
+      photoToCreate.hasValidCoordinates = true;
+      console.log('La foto tiene coordenadas válidas:', photoToCreate.location.coordinates);
     } else {
       // No tiene coordenadas válidas
-      photoToCreate.geocodingStatus = 'error';
+      photoToCreate.geocodingStatus = 'not_applicable';
+      photoToCreate.hasValidCoordinates = false;
     }
 
     const photo = new Photo(photoToCreate);
@@ -84,6 +113,12 @@ exports.searchPhotos = async (filters = {}, options = {}, user) => {
   // Filtrar por visibilidad (solo si se proporciona)
   if (filters.isPublic !== undefined) {
     query.isPublic = filters.isPublic;
+  }
+
+  // Filtrar fotos sin coordenadas válidas si excludeUnknowns es true
+  if (filters.excludeUnknowns) {
+    console.log('Excluyendo fotos sin coordenadas válidas');
+    query.hasValidCoordinates = true;
   }
 
   // Aplicar filtros

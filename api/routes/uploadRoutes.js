@@ -11,7 +11,7 @@ const storage = multer.diskStorage({
     cb(null, path.join(__dirname, '../../temp'));
   },
   filename: function (req, file, cb) {
-    cb(null, `takeout-${Date.now()}${path.extname(file.originalname)}`);
+    cb(null, `photos-zip-${Date.now()}${path.extname(file.originalname)}`);
   }
 });
 
@@ -31,11 +31,18 @@ const upload = multer({
   }
 });
 
-// Rutas
+/**
+ * Ruta: POST /api/upload/zip
+ * Descripción: Procesa un archivo ZIP con fotos y las sube a la plataforma
+ * Parámetros:
+ *   - photoZip: Archivo ZIP con fotos (campo de archivo)
+ *   - isPublic: (opcional) 'true' para hacer todas las fotos públicas, 'false' o ausente para privadas
+ * Autenticación: Requiere token de usuario válido
+ */
 router.post('/zip',
   protect,
-  upload.single('takeoutZip'),
-  uploadController.processTakeoutZip
+  upload.single('photoZip'),
+  uploadController.processPhotoZip
 );
 
 module.exports = router; 

@@ -156,7 +156,7 @@ exports.createPhoto = async (req, res, next) => {
       originalUrl: processedImage.originalUrl,
       thumbnailUrl: processedImage.thumbnailUrl,
       timestamp: processedImage.metadata?.captureDate || null,
-      hasValidTimestamp: !!processedImage.metadata?.captureDate,
+      hasValidTimestamp: processedImage.metadata?.captureDate instanceof Date && !isNaN(processedImage.metadata.captureDate.getTime()),
       hasValidCoordinates: false,
       geocodingStatus: 'not_applicable',
       reviewed: false,
@@ -199,24 +199,51 @@ exports.createPhoto = async (req, res, next) => {
     }
 
     // Procesar coordenadas EXIF si existen
-    if (processedImage.metadata?.coordinates &&
-      Array.isArray(processedImage.metadata.coordinates) &&
-      processedImage.metadata.coordinates.length === 2 &&
-      !isNaN(processedImage.metadata.coordinates[0]) &&
-      !isNaN(processedImage.metadata.coordinates[1])) {
+    if (processedImage.metadata?.coordinates) {
+      // Validar si las coordenadas están como array
+      if (Array.isArray(processedImage.metadata.coordinates) &&
+        processedImage.metadata.coordinates.length === 2 &&
+        !isNaN(processedImage.metadata.coordinates[0]) &&
+        !isNaN(processedImage.metadata.coordinates[1])) {
 
-      console.log('¡Coordenadas válidas encontradas!', processedImage.metadata.coordinates);
+        console.log('¡Coordenadas en formato array válidas encontradas!', processedImage.metadata.coordinates);
 
-      // Solo agregamos location si hay coordenadas válidas
-      photoData.location = {
-        type: 'Point',
-        coordinates: processedImage.metadata.coordinates,
-        name: null
-      };
-      photoData.hasValidCoordinates = true;
-      photoData.geocodingStatus = 'pending';
+        // Solo agregamos location si hay coordenadas válidas
+        photoData.location = {
+          type: 'Point',
+          coordinates: processedImage.metadata.coordinates,
+          name: null
+        };
+        photoData.hasValidCoordinates = true;
+        photoData.geocodingStatus = 'pending';
+      }
+      // Validar si están como objeto lat/lon
+      else if (processedImage.metadata.coordinates.lat !== undefined &&
+        processedImage.metadata.coordinates.lon !== undefined &&
+        !isNaN(processedImage.metadata.coordinates.lat) &&
+        !isNaN(processedImage.metadata.coordinates.lon)) {
+
+        console.log('¡Coordenadas en formato {lat,lon} válidas encontradas!', processedImage.metadata.coordinates);
+
+        // Convertir a formato GeoJSON [lon, lat]
+        const coordinates = [
+          processedImage.metadata.coordinates.lon,
+          processedImage.metadata.coordinates.lat
+        ];
+
+        photoData.location = {
+          type: 'Point',
+          coordinates: coordinates,
+          name: null
+        };
+        photoData.hasValidCoordinates = true;
+        photoData.geocodingStatus = 'pending';
+      }
+      else {
+        console.log('Coordenadas encontradas pero con formato inválido:', processedImage.metadata.coordinates);
+      }
     } else {
-      console.log('No se encontraron coordenadas válidas en la imagen');
+      console.log('No se encontraron coordenadas en la imagen');
     }
 
     console.log('Datos de foto a guardar:', JSON.stringify(photoData, null, 2));
@@ -705,7 +732,8 @@ exports.searchPhotos = async (req, res, next) => {
       searchText: req.body.search || req.body.q || null,
       isPublic: req.body.isPublic !== undefined
         ? Boolean(req.body.isPublic)
-        : undefined
+        : undefined,
+      excludeUnknowns: req.body.excludeUnknowns === 'true' || req.body.excludeUnknowns === true
     };
 
     // Filtro por ubicación
@@ -738,7 +766,7 @@ exports.searchPhotos = async (req, res, next) => {
  */
 exports.getPhotoCalendarStats = async (req, res, next) => {
   try {
-    const { month, year } = req.query;
+    const { month, year, excludeUnknowns } = req.query;
 
     // Validar parámetros
     if (!month || !year) {
@@ -758,13 +786,21 @@ exports.getPhotoCalendarStats = async (req, res, next) => {
       return next(new AppError('El año debe ser un número válido', 400));
     }
 
-    console.log(`Calculando estadísticas para: mes=${monthNum}, año=${yearNum}`);
+    // Verificar si se debe excluir fotos sin coordenadas válidas
+    const filterUnknowns = excludeUnknowns === 'true' || excludeUnknowns === true;
+
+    console.log(`Calculando estadísticas para: mes=${monthNum}, año=${yearNum}, excludeUnknowns=${filterUnknowns}`);
 
     // Preparar el filtro de consulta
     const matchQuery = {
       isPublic: true, // Solo fotos públicas para el mapa
       userId: new mongoose.Types.ObjectId(req.user.id) // Siempre filtrar por el usuario logueado
     };
+
+    // Si se debe excluir fotos sin coordenadas, agregar filtro
+    if (filterUnknowns) {
+      matchQuery.hasValidCoordinates = true;
+    }
 
     // Query para obtener el conteo de fotos por día
     const results = await Photo.aggregate([

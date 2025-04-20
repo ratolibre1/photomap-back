@@ -105,6 +105,28 @@ photoSchema.pre('save', function (next) {
   if (this.location && (!this.location.coordinates || this.location.coordinates.length === 0)) {
     console.log('Detectado objeto location inválido, eliminándolo');
     this.location = undefined;
+    this.hasValidCoordinates = false;
+    this.geocodingStatus = 'not_applicable';
+  }
+  // Si location existe y tiene coordenadas válidas, asegurar que hasValidCoordinates sea true
+  else if (this.location &&
+    this.location.coordinates &&
+    this.location.coordinates.length === 2 &&
+    !isNaN(this.location.coordinates[0]) &&
+    !isNaN(this.location.coordinates[1])) {
+
+    console.log('Coordenadas válidas detectadas, actualizando hasValidCoordinates');
+    this.hasValidCoordinates = true;
+
+    // Si el estado de geocodificación no está establecido, marcarlo como pendiente
+    if (this.geocodingStatus === 'not_applicable') {
+      this.geocodingStatus = 'pending';
+    }
+  }
+  // Si no hay location, asegurar que hasValidCoordinates sea false
+  else if (!this.location) {
+    this.hasValidCoordinates = false;
+    this.geocodingStatus = 'not_applicable';
   }
 
   next();

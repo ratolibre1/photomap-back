@@ -475,40 +475,13 @@ exports.processPendingPhotos = async (options = {}) => {
 
         // Crear objeto de geocodingDetails con valores por defecto
         const geocodingDetails = {
+          countryId: geocodeResult.country ? geocodeResult.country._id : null,
+          regionId: geocodeResult.region ? geocodeResult.region._id : null,
+          countyId: geocodeResult.county ? geocodeResult.county._id : null,
+          cityId: geocodeResult.city ? geocodeResult.city._id : null,
           displayName: geocodeResult.displayName || 'Ubicación desconocida',
-          countryId: null,
-          regionId: null,
-          countyId: null,
-          cityId: null,
           updatedAt: new Date()
         };
-
-        // Asignar IDs solo si los objetos existen
-        if (geocodeResult.country && geocodeResult.country._id) {
-          geocodingDetails.countryId = geocodeResult.country._id;
-          console.log(`✅ Asignando countryId: ${geocodeResult.country._id}`);
-        } else {
-          console.log('❌ No se pudo asignar countryId, es null o undefined');
-          console.log('geocodeResult.country:', geocodeResult.country);
-        }
-
-        if (geocodeResult.region && geocodeResult.region._id) {
-          geocodingDetails.regionId = geocodeResult.region._id;
-          console.log(`✅ Asignando regionId: ${geocodeResult.region._id}`);
-        }
-
-        if (geocodeResult.county && geocodeResult.county._id) {
-          geocodingDetails.countyId = geocodeResult.county._id;
-          console.log(`✅ Asignando countyId: ${geocodeResult.county._id}`);
-        }
-
-        if (geocodeResult.city && geocodeResult.city._id) {
-          geocodingDetails.cityId = geocodeResult.city._id;
-          console.log(`✅ Asignando cityId: ${geocodeResult.city._id}`);
-        }
-
-        // Asegurarse de que el objeto geocodingDetails sea válido
-        console.log('Objeto geocodingDetails completo:', JSON.stringify(geocodingDetails));
 
         // Guardar usando findByIdAndUpdate para evitar problemas con pre-save hooks
         const updatedPhoto = await Photo.findByIdAndUpdate(
@@ -779,23 +752,12 @@ exports.processPhotoGeocoding = async (photoId) => {
 
     // Preparar datos para actualizar la foto
     const geocodingDetails = {
-      country: country ? {
-        id: country._id,
-        name: country.name
-      } : null,
-      region: region ? {
-        id: region._id,
-        name: region.name
-      } : null,
-      county: county ? {
-        id: county._id,
-        name: county.name
-      } : null,
-      city: city ? {
-        id: city._id,
-        name: city.name
-      } : null,
-      displayName: displayName
+      countryId: country ? country._id : null,
+      regionId: region ? region._id : null,
+      countyId: county ? county._id : null,
+      cityId: city ? city._id : null,
+      displayName: displayName,
+      updatedAt: new Date()
     };
 
     console.log(`Detalles de geocodificación para foto ${photoId}:`, JSON.stringify(geocodingDetails));
