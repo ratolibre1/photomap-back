@@ -2,6 +2,7 @@ const PublicMap = require('../models/PublicMap');
 const { AppError } = require('../utils/errorHandler');
 const crypto = require('crypto');
 const photoService = require('./photoService');
+const User = require('../models/User');
 
 /**
  * Genera un ID único para compartir
@@ -17,6 +18,73 @@ const generateShareId = () => {
 
   // Tomamos los primeros 16 caracteres del hash
   return hash.substring(0, 16);
+};
+
+/**
+ * Añade el nombre del usuario a un mapa
+ * @param {Object} map - Mapa a enriquecer 
+ * @returns {Promise<Object>} - Mapa con el nombre de usuario
+ */
+const addUserNameToMap = async (map) => {
+  if (!map) return map;
+
+  if (map.toObject) {
+    // Convertir a objeto plano si es un documento Mongoose
+    const mapObj = map.toObject();
+
+    try {
+      const user = await User.findById(mapObj.userId, 'name');
+      if (user) {
+        mapObj.userName = user.name;
+      }
+      return mapObj;
+    } catch (error) {
+      console.error('Error al buscar nombre de usuario:', error);
+      return mapObj;
+    }
+  } else {
+    // Ya es un objeto plano
+    try {
+      const user = await User.findById(map.userId, 'name');
+      if (user) {
+        map.userName = user.name;
+      }
+    } catch (error) {
+      console.error('Error al buscar nombre de usuario:', error);
+    }
+    return map;
+  }
+};
+
+/**
+ * Añade nombres de usuario a una lista de mapas
+ * @param {Array} maps - Lista de mapas
+ * @returns {Promise<Array>} - Lista de mapas con nombres de usuario
+ */
+const addUserNameToMaps = async (maps) => {
+  if (!maps || !maps.length) return maps;
+
+  // Convertir mapas a objetos planos si son documentos Mongoose
+  const mapsArray = maps.map(map => map.toObject ? map.toObject() : map);
+
+  // Extraer todos los userId únicos
+  const userIds = [...new Set(mapsArray.map(map => map.userId.toString()))];
+
+  // Buscar todos los usuarios en una sola consulta
+  const users = await User.find({ _id: { $in: userIds } }, 'name');
+
+  // Crear un mapa para acceso rápido por ID
+  const userMap = {};
+  users.forEach(user => {
+    userMap[user._id.toString()] = user.name;
+  });
+
+  // Añadir nombre de usuario a cada mapa
+  mapsArray.forEach(map => {
+    map.userName = userMap[map.userId.toString()] || 'Usuario desconocido';
+  });
+
+  return mapsArray;
 };
 
 /**
@@ -61,8 +129,11 @@ exports.getUserMaps = async (userId, options = {}) => {
 
   const total = await PublicMap.countDocuments({ userId });
 
+  // Añadir nombres de usuario a los mapas
+  const mapsWithUserNames = await addUserNameToMaps(maps);
+
   return {
-    maps,
+    maps: mapsWithUserNames,
     pagination: {
       total,
       page,
@@ -76,9 +147,10 @@ exports.getUserMaps = async (userId, options = {}) => {
  * Obtiene un mapa público por ID
  * @param {String} mapId - ID del mapa
  * @param {String} userId - ID del usuario (opcional, para verificar permisos)
+ * @param {Boolean} rawDocument - Si es true, devuelve el documento Mongoose sin transformar
  * @returns {Promise<Object>} - Mapa encontrado
  */
-exports.getMapById = async (mapId, userId = null) => {
+exports.getMapById = async (mapId, userId = null, rawDocument = false) => {
   const map = await PublicMap.findById(mapId);
 
   if (!map) {
@@ -90,7 +162,15 @@ exports.getMapById = async (mapId, userId = null) => {
     throw new AppError('No tienes permiso para acceder a este mapa', 403);
   }
 
-  return map;
+  // Si se solicita el documento crudo, devolverlo directamente
+  if (rawDocument) {
+    return map;
+  }
+
+  // Añadir nombre del usuario al mapa
+  const mapWithUserName = await addUserNameToMap(map);
+
+  return mapWithUserName;
 };
 
 /**
@@ -146,7 +226,10 @@ exports.getMapByShareId = async (shareId, ipAddress) => {
   // Guardar los cambios
   await map.save();
 
-  return map;
+  // Añadir nombre del usuario al mapa
+  const mapWithUserName = await addUserNameToMap(map);
+
+  return mapWithUserName;
 };
 
 /**
@@ -157,7 +240,8 @@ exports.getMapByShareId = async (shareId, ipAddress) => {
  * @returns {Promise<Object>} - Mapa actualizado
  */
 exports.updateMap = async (mapId, updateData, userId) => {
-  const map = await this.getMapById(mapId, userId);
+  // Pasar true como tercer parámetro para obtener el documento Mongoose sin transformar
+  const map = await this.getMapById(mapId, userId, true);
 
   // Actualizar campos permitidos
   if (updateData.title) map.title = updateData.title;
@@ -172,7 +256,11 @@ exports.updateMap = async (mapId, updateData, userId) => {
     map.colorPalette = updateData.colorPalette;
   }
 
-  return await map.save();
+  // Guardar el documento Mongoose
+  await map.save();
+
+  // Devolver el documento con el nombre de usuario
+  return await addUserNameToMap(map);
 };
 
 /**
@@ -182,7 +270,8 @@ exports.updateMap = async (mapId, updateData, userId) => {
  * @returns {Promise<Object>} - Resultado de la operación
  */
 exports.deleteMap = async (mapId, userId) => {
-  const map = await this.getMapById(mapId, userId);
+  // Pasar true como tercer parámetro para obtener el documento Mongoose sin transformar
+  const map = await this.getMapById(mapId, userId, true);
   return await map.deleteOne();
 };
 
