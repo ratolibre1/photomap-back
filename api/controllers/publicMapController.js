@@ -80,7 +80,21 @@ exports.getMapById = async (req, res, next) => {
 // Obtener un mapa público por shareId (acceso público)
 exports.getMapByShareId = async (req, res, next) => {
   try {
-    const map = await publicMapService.getMapByShareId(req.params.shareId);
+    // Obtener la IP del visitante
+    const ipAddress = req.headers['x-forwarded-for'] ||
+      req.connection.remoteAddress ||
+      req.socket.remoteAddress ||
+      req.ip ||
+      '0.0.0.0';
+
+    // Limpiar la IP en caso de que venga con IPv6 prefix
+    const cleanIp = ipAddress.includes('::ffff:') ?
+      ipAddress.split('::ffff:')[1] :
+      ipAddress;
+
+    console.log(`Visita al mapa desde IP: ${cleanIp}`);
+
+    const map = await publicMapService.getMapByShareId(req.params.shareId, cleanIp);
     return success(res, { map });
   } catch (err) {
     next(err);
@@ -105,8 +119,20 @@ exports.getMapPhotosById = async (req, res, next) => {
 // Obtener fotos asociadas a un mapa público por shareId (acceso público)
 exports.getMapPhotosByShareId = async (req, res, next) => {
   try {
+    // Obtener la IP del visitante
+    const ipAddress = req.headers['x-forwarded-for'] ||
+      req.connection.remoteAddress ||
+      req.socket.remoteAddress ||
+      req.ip ||
+      '0.0.0.0';
+
+    // Limpiar la IP en caso de que venga con IPv6 prefix
+    const cleanIp = ipAddress.includes('::ffff:') ?
+      ipAddress.split('::ffff:')[1] :
+      ipAddress;
+
     // Obtener el mapa
-    const map = await publicMapService.getMapByShareId(req.params.shareId);
+    const map = await publicMapService.getMapByShareId(req.params.shareId, cleanIp);
 
     // Obtener las fotos asociadas (pasar usuario si está autenticado)
     const result = await publicMapService.getPhotosForMap(map, req.user || null);

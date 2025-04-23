@@ -81,8 +81,8 @@ const publicMapSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  // El mapa está habilitado o deshabilitado
-  isActive: {
+  // El mapa está público o privado (antes isActive)
+  isPublic: {
     type: Boolean,
     default: true
   },
@@ -98,7 +98,18 @@ const publicMapSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
-    lastViewed: Date
+    lastViewed: Date,
+    // Registro de IPs de visitantes con su timestamp
+    visitors: [{
+      ip: {
+        type: String,
+        required: true
+      },
+      timestamp: {
+        type: Date,
+        default: Date.now
+      }
+    }]
   }
 }, {
   timestamps: true
@@ -108,7 +119,7 @@ const publicMapSchema = new mongoose.Schema({
 publicMapSchema.index({ userId: 1 });
 publicMapSchema.index({ shareId: 1 }, { unique: true });
 publicMapSchema.index({ title: 'text', description: 'text' });
-publicMapSchema.index({ isActive: 1 });
+publicMapSchema.index({ isPublic: 1 });
 
 const PublicMap = mongoose.model('PublicMap', publicMapSchema);
 

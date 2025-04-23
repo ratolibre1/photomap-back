@@ -20,6 +20,17 @@ const userSchema = new mongoose.Schema({
     minlength: 6,
     select: false // No mostrar password en las consultas
   },
+  biography: {
+    type: String,
+    default: '',
+    trim: true,
+    maxlength: [3000, 'La biografía no puede tener más de 3000 caracteres']
+  },
+  profilePhoto: {
+    key: String,       // S3 key
+    url: String,       // URL completa
+    updatedAt: Date    // Fecha de última actualización
+  },
   role: {
     type: String,
     enum: ['user', 'admin'],

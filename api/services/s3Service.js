@@ -134,7 +134,7 @@ exports.uploadBuffer = async ({ Buffer, Key, ContentType }) => {
  */
 exports.deleteObject = async (key) => {
   const params = {
-    Bucket: process.env.AWS_S3_BUCKET,
+    Bucket: AWS_BUCKET_NAME,
     Key: key
   };
 
