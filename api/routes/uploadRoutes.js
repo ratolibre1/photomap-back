@@ -37,6 +37,7 @@ const upload = multer({
  * Parámetros:
  *   - photoZip: Archivo ZIP con fotos (campo de archivo)
  *   - isPublic: (opcional) 'true' para hacer todas las fotos públicas, 'false' o ausente para privadas
+ *   - labels: (opcional) Array o string separado por comas con IDs de etiquetas a aplicar a todas las fotos
  * Autenticación: Requiere token de usuario válido
  */
 router.post('/zip',
@@ -44,5 +45,19 @@ router.post('/zip',
   upload.single('photoZip'),
   uploadController.processPhotoZip
 );
+
+/**
+ * Ruta: GET /api/upload/history
+ * Descripción: Obtiene el historial de cargas del usuario
+ * Autenticación: Requiere token de usuario válido
+ */
+router.get('/history', protect, uploadController.getUploadHistory);
+
+/**
+ * Ruta: GET /api/upload/:id
+ * Descripción: Obtiene detalles de una carga específica
+ * Autenticación: Requiere token de usuario válido
+ */
+router.get('/:id', protect, uploadController.getUploadDetails);
 
 module.exports = router; 

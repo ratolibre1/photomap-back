@@ -1,29 +1,46 @@
 const fs = require('fs');
 const path = require('path');
-const AdmZip = require('adm-zip');
 const unzipper = require('unzip-stream');
-const exifr = require('exifr');
-const s3Service = require('../services/s3Service');
-const photoService = require('../services/photoService');
+const photoProcessingService = require('../services/photoProcessingService');
+const uploadService = require('../services/uploadService');
 const { success } = require('../utils/responseFormatter');
 const { AppError } = require('../utils/errorHandler');
 const os = require('os');
-const sharp = require('sharp');
 
 /**
  * Procesa un archivo ZIP que contiene fotos
  * @param {Object} req - Request de Express
  * @param {Object} res - Response de Express
  * @param {Function} next - Middleware siguiente
+ * 
+ * @description
+ * Acepta los siguientes parámetros:
+ * - req.file: Archivo ZIP con fotos
+ * - req.body.isPublic: 'true' para hacer todas las fotos públicas, 'false' o ausente para privadas
+ * - req.body.labels: Array o string separado por comas con IDs de etiquetas a aplicar a todas las fotos
+ * 
+ * @returns {Object} Objeto con estadísticas del proceso
  */
 exports.processPhotoZip = async (req, res, next) => {
+  let uploadRecord = null;
+
   try {
     if (!req.file) {
       return next(new AppError('No se ha subido ningún archivo', 400));
     }
 
+    console.log('Procesando ZIP con nombre:', req.file.originalname, 'tamaño:', req.file.size);
     const zipPath = req.file.path;
     const extractPath = path.join(os.tmpdir(), `photos-${Date.now()}`);
+
+    // Crear registro de upload en BD
+    uploadRecord = await uploadService.createUploadRecord({
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      uploadType: 'zip'
+    }, req.user.id);
+
+    console.log(`Creado registro de upload con ID: ${uploadRecord._id}`);
 
     // Obtener el flag de visibilidad pública (default: false)
     const isPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
@@ -36,18 +53,6 @@ exports.processPhotoZip = async (req, res, next) => {
 
     console.log('Iniciando procesamiento de ZIP con fotos');
     console.log('Información del archivo:', req.file);
-
-    // Estadísticas a devolver
-    const stats = {
-      processed: 0,
-      withLocation: 0,
-      withoutLocation: 0,
-      withTimestamp: 0,
-      withoutTimestamp: 0,
-      isPublic: isPublic,
-      errors: 0,
-      photos: []
-    };
 
     // Extraer el ZIP
     const readStream = fs.createReadStream(zipPath);
@@ -69,6 +74,22 @@ exports.processPhotoZip = async (req, res, next) => {
       await extractionPromise;
     } catch (extractError) {
       console.error('Error en extracción:', extractError);
+      // Marcar upload como fallido
+      if (uploadRecord) {
+        await uploadService.failUpload(uploadRecord._id, `Error al extraer ZIP: ${extractError.message}`);
+      }
+
+      // Intentar limpiar recursos antes de devolver error
+      try {
+        if (fs.existsSync(zipPath)) {
+          fs.unlinkSync(zipPath);
+        }
+        if (fs.existsSync(extractPath)) {
+          fs.rmSync(extractPath, { recursive: true, force: true });
+        }
+      } catch (cleanupErr) {
+        console.warn('Error al limpiar recursos temporales:', cleanupErr);
+      }
       return next(new AppError(`Error al extraer el archivo ZIP: ${extractError.message}`, 500));
     }
 
@@ -76,191 +97,56 @@ exports.processPhotoZip = async (req, res, next) => {
     const imageFiles = findImageFiles(extractPath);
     console.log(`Se encontraron ${imageFiles.length} archivos de imagen`);
 
-    // Procesar cada imagen
+    // Si no hay imágenes, devolver error
+    if (imageFiles.length === 0) {
+      // Marcar upload como fallido
+      if (uploadRecord) {
+        await uploadService.failUpload(uploadRecord._id, 'El archivo ZIP no contiene imágenes válidas');
+      }
+
+      // Limpiar recursos
+      try {
+        fs.unlinkSync(zipPath);
+        fs.rmSync(extractPath, { recursive: true, force: true });
+      } catch (cleanupErr) {
+        console.warn('Error al limpiar recursos temporales:', cleanupErr);
+      }
+      return next(new AppError('El archivo ZIP no contiene imágenes válidas', 400));
+    }
+
+    // Preparar array de infos para el procesamiento
+    const photoInfos = [];
+
+    // Leer cada imagen y preparar para procesamiento
     for (const imagePath of imageFiles) {
       try {
-        console.log(`Procesando: ${imagePath}`);
-
-        // Leer la imagen
         const imageBuffer = fs.readFileSync(imagePath);
-
-        // Extraer metadatos EXIF
-        let exifData = {};
-        try {
-          exifData = await exifr.parse(imageBuffer, {
-            gps: true,
-            exif: true,
-            iptc: true,
-            xmp: true
-          });
-
-          console.log('Metadatos EXIF extraídos:', {
-            hasDate: !!exifData.DateTimeOriginal,
-            dateType: exifData.DateTimeOriginal ? typeof exifData.DateTimeOriginal : 'none',
-            hasGPS: !!(exifData.latitude && exifData.longitude)
-          });
-        } catch (exifErr) {
-          console.warn(`Error al extraer EXIF: ${exifErr.message}`);
-        }
-
-        // Redimensionar imágenes
-        let optimizedBuffer, thumbnailBuffer;
-
-        try {
-          // Versión optimizada (máximo 1800px en su dimensión más grande)
-          optimizedBuffer = await sharp(imageBuffer)
-            .rotate() // Auto-rotar según EXIF
-            .resize({
-              width: 1800,
-              height: 1800,
-              fit: 'inside',
-              withoutEnlargement: true
-            })
-            .jpeg({ quality: 85 })
-            .toBuffer();
-
-          // Miniatura (300px)
-          thumbnailBuffer = await sharp(imageBuffer)
-            .rotate()
-            .resize({
-              width: 300,
-              height: 300,
-              fit: 'inside',
-              withoutEnlargement: true
-            })
-            .jpeg({ quality: 75 })
-            .toBuffer();
-
-        } catch (sharpErr) {
-          console.error(`Error procesando imagen con Sharp: ${sharpErr.message}`);
-          // Fallback: usar buffer original
-          optimizedBuffer = imageBuffer;
-          thumbnailBuffer = imageBuffer;
-        }
-
-        // Subir a S3
         const fileName = path.basename(imagePath);
-        const userId = req.user?.id;
-        const s3Key = `users/${userId}/photos/zip-${Date.now()}-${fileName}`;
-        const thumbnailKey = `users/${userId}/photos/thumbnails/zip-${Date.now()}-${fileName}`;
 
-        const uploadResult = await s3Service.uploadBuffer({
-          Buffer: optimizedBuffer,
-          Key: s3Key,
-          ContentType: 'image/jpeg'
-        });
-
-        const thumbnailResult = await s3Service.uploadBuffer({
-          Buffer: thumbnailBuffer,
-          Key: thumbnailKey,
-          ContentType: 'image/jpeg'
-        });
-
-        // Preparar datos para BD
-        const photoData = {
-          userId: userId,
-          title: fileName,
-          description: '',
-          s3Key: uploadResult.Key,
-          s3Url: uploadResult.Location,
-          timestamp: null, // Lo estableceremos después de validar
-          thumbnailUrl: thumbnailResult.Location,
-          originalUrl: uploadResult.Location,
-          source: 'zip_upload',
-          isPublic: isPublic,
-          metadata: {
-            width: exifData.ImageWidth,
-            height: exifData.ImageHeight,
-            creationTime: exifData.DateTimeOriginal,
-            camera: exifData.Make ? `${exifData.Make} ${exifData.Model}`.trim() : undefined,
-            lens: exifData.LensModel,
-            aperture: exifData.FNumber ? `f/${exifData.FNumber}` : undefined,
-            shutterSpeed: exifData.ExposureTime ? `${exifData.ExposureTime}s` : undefined,
-            iso: exifData.ISO,
-            fileSize: imageBuffer.length,
-            fileType: 'image/jpeg'
+        photoInfos.push({
+          buffer: imageBuffer,
+          fileName: fileName,
+          options: {
+            isPublic: isPublic,
+            labels: req.body.labels // Pasamos etiquetas si hay
           }
-        };
-
-        // Procesar el timestamp
-        let timestamp = null;
-
-        // Primero intentar con EXIF DateTimeOriginal
-        if (exifData.DateTimeOriginal) {
-          console.log('Usando fecha de EXIF:', exifData.DateTimeOriginal);
-          timestamp = exifData.DateTimeOriginal;
-        }
-        // Usar la fecha del nombre del archivo si parece tener formato de fecha
-        else if (fileName.match(/\d{8}/) || fileName.match(/\d{4}[-_]\d{2}[-_]\d{2}/)) {
-          console.log('Intentando extraer fecha del nombre del archivo:', fileName);
-          try {
-            // Extraer partes de fecha de nombres como IMG_20200326_181917.jpg
-            const dateMatch = fileName.match(/(\d{4})(\d{2})(\d{2})/);
-            if (dateMatch) {
-              const [_, year, month, day] = dateMatch;
-              // Extraer hora si existe
-              const timeMatch = fileName.match(/(\d{2})(\d{2})(\d{2})/g);
-              let hours = 0, minutes = 0, seconds = 0;
-
-              if (timeMatch && timeMatch.length > 1) {
-                // Si hay al menos 2 coincidencias, la segunda podría ser la hora
-                const timeParts = timeMatch[1];
-                hours = parseInt(timeParts.substring(0, 2), 10);
-                minutes = parseInt(timeParts.substring(2, 4), 10);
-                seconds = parseInt(timeParts.substring(4, 6), 10);
-              }
-
-              timestamp = new Date(year, month - 1, day, hours, minutes, seconds);
-              console.log('Fecha extraída del nombre:', timestamp);
-            }
-          } catch (dateErr) {
-            console.warn('Error extrayendo fecha del nombre:', dateErr.message);
-          }
-        }
-
-        // Última opción: usar la fecha actual
-        if (!timestamp || isNaN(timestamp.getTime())) {
-          console.log('Usando fecha actual como fallback');
-          timestamp = new Date();
-        }
-
-        photoData.timestamp = timestamp;
-
-        // Agregar ubicación si existe en EXIF
-        if (exifData && typeof exifData.latitude === 'number' && typeof exifData.longitude === 'number') {
-          photoData.location = {
-            type: 'Point',
-            coordinates: [exifData.longitude, exifData.latitude]
-          };
-          stats.withLocation++;
-        } else {
-          stats.withoutLocation++;
-        }
-
-        // Actualizar estadísticas de timestamp
-        if (photoData.timestamp && photoData.timestamp instanceof Date && !isNaN(photoData.timestamp.getTime())) {
-          stats.withTimestamp++;
-        } else {
-          stats.withoutTimestamp++;
-        }
-
-        // Guardar en BD
-        console.log(`Guardando en BD: ${photoData.title}`);
-        const photo = await photoService.createPhoto(photoData, photoData.userId);
-
-        stats.processed++;
-        stats.photos.push({
-          id: photo.id,
-          title: photoData.title,
-          hasLocation: !!photoData.location,
-          hasTimestamp: !!(photoData.timestamp && photoData.timestamp instanceof Date && !isNaN(photoData.timestamp.getTime()))
         });
-
-      } catch (photoErr) {
-        console.error(`Error procesando foto: ${photoErr.message}`);
-        stats.errors++;
+      } catch (readError) {
+        console.error(`Error leyendo archivo ${imagePath}:`, readError);
       }
     }
+
+    console.log(`Preparadas ${photoInfos.length} fotos para procesar`);
+
+    // Procesar todas las fotos con el servicio compartido
+    const results = await photoProcessingService.processMultiplePhotos(photoInfos, req.user?.id);
+
+    console.log(`Procesamiento ZIP completado. Stats:`, JSON.stringify({
+      processed: results.stats.processed,
+      duplicates: results.stats.duplicates,
+      errors: results.stats.errors,
+      totalPhotos: photoInfos.length
+    }));
 
     // Limpiar archivos temporales
     try {
@@ -268,16 +154,132 @@ exports.processPhotoZip = async (req, res, next) => {
       fs.rmSync(extractPath, { recursive: true, force: true }); // Eliminar directorio temporal
     } catch (cleanupErr) {
       console.warn(`Error al limpiar archivos temporales: ${cleanupErr.message}`);
+      // Continuamos a pesar del error en la limpieza
+    }
+
+    // Preparar información para actualizar el registro de upload
+    const photoDetails = [];
+    if (results.stats.photos && results.stats.photos.length > 0) {
+      for (const photo of results.stats.photos) {
+        const photoDetail = {
+          fileName: photo.title || photo.fileName,
+          status: photo.duplicate ? 'duplicate' : (photo.error ? 'error' : 'processed'),
+          errorMessage: photo.error || null
+        };
+
+        // Agregar ID solo si fue procesada correctamente o es duplicada
+        if (photo.id) {
+          photoDetail.photoId = photo.id;
+        }
+
+        photoDetails.push(photoDetail);
+      }
+    }
+
+    // Asegurar que las estadísticas tengan todos los campos necesarios
+    if (!results.stats.withLocation) results.stats.withLocation = 0;
+    if (!results.stats.withoutLocation) results.stats.withoutLocation = 0;
+    if (!results.stats.withTimestamp) results.stats.withTimestamp = 0;
+    if (!results.stats.withoutTimestamp) results.stats.withoutTimestamp = 0;
+
+    // Actualizar registro de upload como completado
+    if (uploadRecord) {
+      await uploadService.completeUpload(uploadRecord._id, results.stats, photoDetails);
+    }
+
+    // Detectar si todas son duplicadas
+    if (results.stats.duplicates > 0 && results.stats.processed === 0) {
+      if (results.stats.duplicates === photoInfos.length) {
+        // Si TODAS son duplicadas, modificamos el mensaje y aseguramos un status 200
+        return success(res, {
+          message: `¡Todas las fotos (${results.stats.duplicates}) ya existen en tu colección!`,
+          allDuplicates: true,
+          stats: results.stats,
+          uploadId: uploadRecord?._id
+        });
+      } else if (results.stats.errors > 0) {
+        // Si hay algunas duplicadas y algunos errores
+        results.message = `Se encontraron ${results.stats.duplicates} fotos duplicadas y hubo ${results.stats.errors} errores en el procesamiento.`;
+      } else {
+        // Solo duplicadas sin errores (caso poco probable pero posible)
+        results.message = `Se encontraron ${results.stats.duplicates} fotos duplicadas.`;
+      }
     }
 
     return success(res, {
-      message: `Procesamiento de ZIP completado. Se procesaron ${stats.processed} fotos.`,
-      stats
+      message: results.message,
+      stats: results.stats,
+      uploadId: uploadRecord?._id
     });
 
   } catch (error) {
     console.error('Error general en procesamiento de ZIP:', error);
+
+    // Marcar upload como fallido
+    if (uploadRecord) {
+      await uploadService.failUpload(uploadRecord._id, `Error al procesar ZIP: ${error.message}`);
+    }
+
+    // Intentar limpieza en caso de error
+    try {
+      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      // Limpiar directorio temporal si existe
+      const extractPath = path.join(os.tmpdir(), `photos-${Date.now()}`);
+      if (fs.existsSync(extractPath)) {
+        fs.rmSync(extractPath, { recursive: true, force: true });
+      }
+    } catch (cleanupError) {
+      console.error('Error durante limpieza de emergencia:', cleanupError);
+    }
     return next(new AppError(`Error al procesar ZIP: ${error.message}`, 500));
+  }
+};
+
+/**
+ * Obtiene el historial de cargas del usuario
+ * @param {Object} req - Request de Express
+ * @param {Object} res - Response de Express
+ * @param {Function} next - Middleware siguiente
+ */
+exports.getUploadHistory = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+
+    const history = await uploadService.getUserUploads(req.user.id, {
+      page,
+      limit
+    });
+
+    return success(res, history);
+  } catch (error) {
+    console.error('Error al obtener historial de cargas:', error);
+    return next(error);
+  }
+};
+
+/**
+ * Obtiene detalles de una carga específica
+ * @param {Object} req - Request de Express
+ * @param {Object} res - Response de Express
+ * @param {Function} next - Middleware siguiente
+ */
+exports.getUploadDetails = async (req, res, next) => {
+  try {
+    const uploadId = req.params.id;
+
+    if (!uploadId) {
+      return next(new AppError('ID de carga no proporcionado', 400));
+    }
+
+    const upload = await uploadService.getUploadById(uploadId, req.user.id);
+
+    return success(res, { upload });
+  } catch (error) {
+    console.error('Error al obtener detalles de carga:', error);
+    return next(error);
   }
 };
 
