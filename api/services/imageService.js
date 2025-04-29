@@ -41,11 +41,13 @@ exports.processImage = async (imageBuffer, originalName, options = {}) => {
         fit: 'inside',
         withoutEnlargement: true
       })
+      .rotate()
       .toBuffer();
 
     // Crear thumbnail (300px x 300px)
     const thumbnailBuffer = await sharp(imageBuffer)
       .resize(300, 300, { fit: 'cover' })
+      .rotate()
       .jpeg({ quality: 80 })
       .toBuffer();
 

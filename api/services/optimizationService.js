@@ -23,7 +23,7 @@ exports.optimizeForWeb = async (imageBuffer, options = {}) => {
       fit: options.fit || 'inside',
       withoutEnlargement: true
     })
-    .rotate() // Auto-rotación basada en EXIF
+    .rotate() // Auto-rotación basada en EXIF: corrige la orientación automáticamente según metadatos EXIF
     .flatten({ background: { r: 255, g: 255, b: 255 } }); // Fondo blanco para imágenes con alfa
 
   // Aplicar formato
