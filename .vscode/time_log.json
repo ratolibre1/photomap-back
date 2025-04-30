@@ -1,0 +1,22 @@
+{
+  "photomap-back": {
+    "api/routes/uploadRoutes.js": [
+      {
+        "date": "2025-04-30T06:39:26.847Z",
+        "user": {
+          "name": "Arturo Vial Arqueros",
+          "email": "arturo@somosradar.com"
+        },
+        "timeSpent": 2
+      },
+      {
+        "date": "2025-04-30T06:39:27.749Z",
+        "user": {
+          "name": "Arturo Vial Arqueros",
+          "email": "arturo@somosradar.com"
+        },
+        "timeSpent": 1
+      }
+    ]
+  }
+}
