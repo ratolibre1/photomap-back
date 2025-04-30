@@ -4,3 +4,4 @@ node_modules/
 logs/
 temp/
 *.zip
+.vscode/

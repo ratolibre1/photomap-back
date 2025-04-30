@@ -3,12 +3,23 @@ const router = express.Router();
 const uploadController = require('../controllers/uploadController');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const { protect } = require('../middlewares/auth');
 
 // Configurar multer para almacenar los archivos
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, '../../temp'));
+    const tempDir = path.join(__dirname, '../../temp');
+    // Crear el directorio si no existe
+    if (!fs.existsSync(tempDir)) {
+      try {
+        fs.mkdirSync(tempDir, { recursive: true });
+        console.log(`Directorio temporal creado: ${tempDir}`);
+      } catch (err) {
+        console.error(`Error al crear directorio temporal: ${err.message}`);
+      }
+    }
+    cb(null, tempDir);
   },
   filename: function (req, file, cb) {
     cb(null, `photos-zip-${Date.now()}${path.extname(file.originalname)}`);
