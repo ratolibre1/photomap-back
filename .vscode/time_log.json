@@ -35,6 +35,16 @@
         },
         "timeSpent": 48
       }
+    ],
+    ".gitignore.git": [
+      {
+        "date": "2025-04-30T06:45:19.350Z",
+        "user": {
+          "name": "Arturo Vial Arqueros",
+          "email": "arturo@somosradar.com"
+        },
+        "timeSpent": 29
+      }
     ]
   }
 }
