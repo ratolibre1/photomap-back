@@ -15,6 +15,10 @@ const countrySchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  visible: {
+    type: Boolean,
+    default: true
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -26,6 +30,9 @@ countrySchema.index({ name: 1 });
 
 // Índice compuesto para garantizar nombres únicos por usuario
 countrySchema.index({ name: 1, userId: 1 }, { unique: true });
+
+// Índice para consultas de visibilidad
+countrySchema.index({ visible: 1 });
 
 const Country = mongoose.model('Country', countrySchema);
 module.exports = Country; 

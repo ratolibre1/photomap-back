@@ -21,6 +21,10 @@ const countySchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  visible: {
+    type: Boolean,
+    default: true
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -31,6 +35,7 @@ const countySchema = new mongoose.Schema({
 countySchema.index({ name: 1, regionId: 1 }, { unique: true });
 countySchema.index({ regionId: 1 });
 countySchema.index({ countryId: 1 });
+countySchema.index({ visible: 1 });
 
 const County = mongoose.model('County', countySchema);
 module.exports = County; 

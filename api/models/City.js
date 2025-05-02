@@ -26,6 +26,10 @@ const citySchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  visible: {
+    type: Boolean,
+    default: true
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -37,6 +41,7 @@ citySchema.index({ name: 1, countyId: 1 }, { unique: true });
 citySchema.index({ countyId: 1 });
 citySchema.index({ regionId: 1 });
 citySchema.index({ countryId: 1 });
+citySchema.index({ visible: 1 });
 
 const City = mongoose.model('City', citySchema);
 module.exports = City; 

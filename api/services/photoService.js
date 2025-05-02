@@ -3,6 +3,7 @@ const { AppError } = require('../utils/errorHandler');
 const s3Service = require('./s3Service');
 const imageService = require('./imageService');
 const mongoose = require('mongoose');
+const locationService = require('./locationService');
 
 // Aplicar al principio del archivo
 mongoose.set('strictPopulate', false);
@@ -332,10 +333,19 @@ exports.updatePhoto = async (photoId, updateData, userId) => {
 exports.deletePhoto = async (photoId, userId, userRole) => {
   const photo = await Photo.findById(photoId);
 
+  if (!photo) {
+    throw new AppError('Foto no encontrada', 404);
+  }
+
   // Corregido para usar userId y userRole pasados como parámetros
   if (photo.userId && photo.userId.toString() !== userId && userRole !== 'admin') {
     throw new AppError('No tienes permiso para eliminar esta foto', 403);
   }
+
+  // Guardar información de geocodificación antes de eliminar
+  const photoData = {
+    geocodingDetails: photo.geocodingDetails || {}
+  };
 
   // Eliminar archivos de S3
   await s3Service.deleteFileFromS3(photo.originalUrl);
@@ -343,6 +353,9 @@ exports.deletePhoto = async (photoId, userId, userRole) => {
 
   // Eliminar de la base de datos
   await Photo.findByIdAndDelete(photoId);
+
+  // Actualizar visibilidad de ubicaciones
+  await locationService.updateLocationVisibilityForPhoto(photoData);
 
   return { message: 'Foto eliminada correctamente' };
 };
@@ -445,6 +458,9 @@ exports.deleteMultiplePhotos = async (photoIds, userId) => {
     // Claves de S3 para eliminar en lote al final
     const s3Keys = [];
 
+    // Guardar datos de ubicación de cada foto para actualizar visibilidad después
+    const photosLocationData = [];
+
     // Para cada ID en el array, intentar eliminar
     for (const photoId of photoIds) {
       try {
@@ -470,6 +486,13 @@ exports.deleteMultiplePhotos = async (photoIds, userId) => {
           result.errors.push({ id: photoId, error: 'No tienes permiso para esta foto' });
           result.totalFailed++;
           continue;
+        }
+
+        // Guardar datos de ubicación para actualizar después
+        if (photo.geocodingDetails) {
+          photosLocationData.push({
+            geocodingDetails: photo.geocodingDetails
+          });
         }
 
         // Recolectar URLs de S3 para eliminar después
@@ -518,6 +541,17 @@ exports.deleteMultiplePhotos = async (photoIds, userId) => {
         console.error('Error al eliminar objetos de S3:', s3Error);
         result.s3Objects.errors = s3Keys.length;
       }
+    }
+
+    // Actualizar visibilidad de ubicaciones para todas las fotos eliminadas
+    try {
+      console.log(`Actualizando visibilidad de ubicaciones para ${photosLocationData.length} fotos`);
+      const updatePromises = photosLocationData.map(photoData =>
+        locationService.updateLocationVisibilityForPhoto(photoData)
+      );
+      await Promise.all(updatePromises);
+    } catch (updateError) {
+      console.error('Error al actualizar visibilidad de ubicaciones:', updateError);
     }
 
     return result;

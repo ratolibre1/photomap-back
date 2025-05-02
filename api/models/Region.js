@@ -16,6 +16,10 @@ const regionSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  visible: {
+    type: Boolean,
+    default: true
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -25,6 +29,7 @@ const regionSchema = new mongoose.Schema({
 // Índices para búsquedas comunes
 regionSchema.index({ name: 1, countryId: 1 }, { unique: true });
 regionSchema.index({ countryId: 1 });
+regionSchema.index({ visible: 1 });
 
 const Region = mongoose.model('Region', regionSchema);
 module.exports = Region; 

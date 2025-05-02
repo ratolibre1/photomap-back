@@ -16,6 +16,7 @@ const coordParser = require('coord-parser');
 const mongoose = require('mongoose');
 const geocodingService = require('../services/geocodingService');
 const photoProcessingService = require('../services/photoProcessingService');
+const locationService = require('../services/locationService');
 
 // Configuración de multer para subida temporal
 const storage = multer.diskStorage({
@@ -225,6 +226,16 @@ exports.updatePhoto = async (req, res, next) => {
 
     console.log('Datos de actualización recibidos:', updateData);
 
+    // Obtener la foto original para guardar las ubicaciones anteriores
+    const originalPhoto = await Photo.findById(id);
+    if (!originalPhoto) {
+      return next(new AppError('No se encontró la foto', 404));
+    }
+
+    // Guardar ubicaciones anteriores para verificar visibilidad después
+    const previousLocations = originalPhoto.geocodingDetails ? { ...originalPhoto.geocodingDetails } : null;
+    let needsGeocoding = false;
+
     // Al actualizar datos, marcar como reviewed
     updateData.reviewed = true;
 
@@ -261,6 +272,7 @@ exports.updatePhoto = async (req, res, next) => {
     // Si vienen coordenadas, procesarlas
     if (updateData.coordinates) {
       console.log('Procesando coordenadas:', updateData.coordinates);
+      needsGeocoding = true;
 
       // Si las coordenadas vienen como array, convertirlas a string
       const coordString = Array.isArray(updateData.coordinates)
@@ -278,6 +290,12 @@ exports.updatePhoto = async (req, res, next) => {
           };
           updateData.hasValidCoordinates = true;
           updateData.geocodingStatus = 'pending';
+
+          // Reiniciar geocodingDetails manteniendo solo updatedAt
+          updateData.geocodingDetails = {
+            updatedAt: new Date()
+          };
+
           // NO marcamos edited=true aquí, ya estamos marcando reviewed=true arriba
 
           // Eliminar coordenadas ya que se han procesado
@@ -330,12 +348,119 @@ exports.updatePhoto = async (req, res, next) => {
       return next(new AppError('No se encontró la foto', 404));
     }
 
+    // Si se actualizaron las coordenadas, procesar geocodificación
+    if (needsGeocoding) {
+      try {
+        console.log(`Procesando geocodificación inmediata para foto ${id}...`);
+
+        // Procesar geocodificación de forma síncrona
+        const result = await geocodingService.processPhotoGeocoding(id);
+        console.log(`Resultado de geocodificación inmediata: ${result ? 'exitoso' : 'fallido'}`);
+
+        // Recargar la foto con los nuevos datos de geocodificación
+        const updatedPhoto = await Photo.findById(id);
+
+        // Si se obtuvieron nuevas ubicaciones, actualizar su visibilidad
+        if (updatedPhoto && updatedPhoto.geocodingDetails) {
+          await updateNewLocationsVisibility(updatedPhoto.geocodingDetails);
+        }
+
+        // Verificar si debemos actualizar la visibilidad de ubicaciones anteriores
+        if (previousLocations) {
+          await updatePreviousLocationsVisibility(previousLocations);
+        }
+
+        // Devolver la foto actualizada con todos los datos de geocodificación
+        return success(res, { photo: updatedPhoto });
+      } catch (error) {
+        console.error(`Error al procesar geocodificación para foto ${id}:`, error);
+        // Continuamos con la foto original en caso de error
+      }
+    }
+
     return success(res, { photo });
   } catch (error) {
     console.error('Error al actualizar la foto:', error);
     return next(error);
   }
 };
+
+/**
+ * Actualiza la visibilidad de nuevas ubicaciones a visible=true
+ * @param {Object} geocodingDetails - Detalles de geocodificación con los IDs de ubicación
+ */
+async function updateNewLocationsVisibility(geocodingDetails) {
+  if (!geocodingDetails) return;
+
+  try {
+    // Para cada ubicación, actualizar directamente a visible=true
+    const promises = [];
+
+    if (geocodingDetails.cityId) {
+      const City = require('../models/City');
+      const city = await City.findById(geocodingDetails.cityId);
+      if (city && city.visible === false) {
+        city.visible = true;
+        promises.push(city.save());
+        console.log(`Ciudad ${city.name} (${city._id}) actualizada a visible=true`);
+      }
+    }
+
+    if (geocodingDetails.countyId) {
+      const County = require('../models/County');
+      const county = await County.findById(geocodingDetails.countyId);
+      if (county && county.visible === false) {
+        county.visible = true;
+        promises.push(county.save());
+        console.log(`Provincia ${county.name} (${county._id}) actualizada a visible=true`);
+      }
+    }
+
+    if (geocodingDetails.regionId) {
+      const Region = require('../models/Region');
+      const region = await Region.findById(geocodingDetails.regionId);
+      if (region && region.visible === false) {
+        region.visible = true;
+        promises.push(region.save());
+        console.log(`Región ${region.name} (${region._id}) actualizada a visible=true`);
+      }
+    }
+
+    if (geocodingDetails.countryId) {
+      const Country = require('../models/Country');
+      const country = await Country.findById(geocodingDetails.countryId);
+      if (country && country.visible === false) {
+        country.visible = true;
+        promises.push(country.save());
+        console.log(`País ${country.name} (${country._id}) actualizado a visible=true`);
+      }
+    }
+
+    await Promise.all(promises);
+  } catch (error) {
+    console.error('Error al actualizar visibilidad de nuevas ubicaciones:', error);
+  }
+}
+
+/**
+ * Verifica si las ubicaciones anteriores aún tienen fotos y actualiza su visibilidad
+ * @param {Object} previousLocations - Ubicaciones anteriores de la foto
+ */
+async function updatePreviousLocationsVisibility(previousLocations) {
+  if (!previousLocations) return;
+
+  try {
+    // Para cada ubicación anterior, verificar si sigue teniendo fotos
+    const photoData = {
+      geocodingDetails: previousLocations
+    };
+
+    // Usar el servicio existente para actualizar la visibilidad
+    await locationService.updateLocationVisibilityForPhoto(photoData);
+  } catch (error) {
+    console.error('Error al actualizar visibilidad de ubicaciones anteriores:', error);
+  }
+}
 
 /**
  * Actualiza la transformación CSS de una foto
